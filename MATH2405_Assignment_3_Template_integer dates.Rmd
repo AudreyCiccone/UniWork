@@ -1,0 +1,1260 @@
+---
+title: 'Data Wrangling Assessment Task 3: Dataset challenge'
+author: "Audrey Ciccone s3932014"
+subtitle: "Employment and population"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+  pdf: default
+  pdf_document: default
+  
+  
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, fig.asp = 0.8, fig.fullwidth = TRUE, out.width = "100%")
+```
+
+# Executive Summary
+
+The following analysis of Employment and Population is based on data from the Australian Bureau of Statistics and Labour Market Insights from the Australian government.  
+
+Overall, by combining a rich amount of data from a number of sources, this project is the culmination of the data wrangling and pre-processing steps learned in MATH2405 in addition to a number of new R codes and functions required to clean and shape the data in the way I saw it coming together.  
+
+This project will step you through the data imports, cleaning, tidying, merging and mutation of new variables to enhance the data into a final merged data set.
+
+
+# Step 1: Project setup
+
+## Library Setup 
+
+The following packages have been loaded into the RMarkdown file to enable the code execution.  Specifically:
+
+* readr, rvest, rexcel to enable data download and writing functionality
+* tidyverse, tidyr, dplyr, and plyr to enable most data transformation and tidy data functions
+* lubridate to assist in cleaning the date format
+* tidyselect and stringr to assist with character strings
+* forcats for working with factors and categorical variables
+* reshape2 to restructure and aggregate data
+* outliers and stats to assist with cleaning missing values and outliers
+* ggplot2 for data visualisations along with a preferred visualisation theme
+* Forecast for Box-Cox transformation
+* knitr and lemon to show nicer tables
+```{r libraries, echo=FALSE, message=FALSE, warning=FALSE}
+
+library(readr)
+library(rvest)
+library(readxl)
+library(tidyr)
+library(tidyverse)
+library(dplyr)
+library(plyr)
+library(tidyselect)
+library(lubridate)
+library(stringr)
+library(reshape2)
+library(forcats)
+library(forecast)
+library(ggplot2)
+theme_set(
+  theme_classic() +
+    theme(legend.position = "right")
+)
+library(outliers)
+library(MVN)
+library(stats)
+library(knitr)
+library(lemon)
+knit_print.data.frame <- lemon_print
+
+```
+
+## Data Set Imports 
+
+The data used in this analysis was based on employment and population data from a number of online Australian government sources. While some data sets included many years worth of data, the analysis was limited to a 5 year span between December 2017 and December 2021 based on the data source and range for the  population data.
+
+
+### Data set 1: Population table by gender and state
+
+This data set was downloaded as an xlsx file from the Australian Bureau of Statistics website and contains aggregated data related to population totals by state, gender and a variety of date formats (fiscal, calendar and month names).
+
+The extract contains 79 rows and 10 columns with the 8 states/territories and an Australian total in a wide-format.  The first column contained 2 different variables - gender and dates from 2015/16 to December 2021 - as well as random unrelated character strings which needed to be cleaned.  The table had ABS branding and additional data in the first 4 rows which were skipped during the download.
+
+
+```{r data1, echo=FALSE, message=FALSE, warning=FALSE}
+
+temp2 = tempfile(fileext = ".xlsx")
+data_url2 <- "https://www.abs.gov.au/statistics/people/population/national-state-and-territory-population/dec-2021/31010do001_202112.xlsx"
+
+download.file(data_url2, destfile = temp2, mode = "wb")
+
+population_df <- readxl::read_excel(temp2, sheet = "Table_5", skip=4)
+
+```
+
+### Data set 2: Hourly wage rates by gender, state and employment status
+
+This data set was downloaded as an xlsx file from the Australian Bureau of Statistics website and contains aggregated data related to hourly wage rates by state, gender, employment type and date.
+
+The extract contains 178 rows and 10 columns with the 8 states/territories and an Australian total in a wide-format.  The first column contained 3 different variables - gender, employment type and dates in years from 2004 to 2021 - as well as random unrelated character strings which needed to be cleaned.  The table had ABS branding and additional data in the first 4 rows which were skipped during the download.
+
+
+```{r data2, echo=FALSE, message=FALSE, warning=FALSE}
+temp3 = tempfile(fileext = ".xlsx")
+data_url3 <- "https://www.abs.gov.au/statistics/labour/earnings-and-working-conditions/characteristics-employment-australia/aug-2021/63330do001a_202108.xlsx"
+
+download.file(data_url3, destfile = temp3, mode = "wb")
+
+earnings_df <- readxl::read_excel(temp3, sheet = "Table 1a.2", skip=4)
+
+```
+
+### Data set 3: Employment type, hours of work range, employment counts and work hours by state and gender
+
+This data set was downloaded as an xlsx file from the Australian Bureau of Statistics website and contains aggregated data related to:
+
+* Number of employees: full-time and part-time
+* Aggregated hours worked: full-time and part-time
+
+The extract contains 321,293 rows and 9 variables including gender, state, date (yyyy-mm-dd) from January 1991 to June 2022, employment type and hours worked ranges.  The table had ABS branding and additional data in the first 3 rows which were skipped during the download otherwise the data was well labelled in a proper table format.
+
+
+```{r data3, echo=FALSE, message=FALSE, warning=FALSE}
+temp1 = tempfile(fileext = ".xlsx")
+data_url1 <- "https://www.abs.gov.au/statistics/labour/employment-and-unemployment/labour-force-australia-detailed/jun-2022/EM6a.xlsx"
+
+download.file(data_url1, destfile = temp1, mode = "wb")
+
+workers_df <- readxl::read_excel(temp1, sheet = "Data 1", skip = 3)
+
+```
+
+### Data set 4: Employed population by gender, ASGS location and age ranges
+
+This data set was downloaded as an xlsx file from the Australian Bureau of Statistics website and contains aggregated data related to populations of employees in the following employment categories:
+
+* Full-time
+* Part-time
+* Unemployed
+* Those not in the labour force
+
+The extract contains 297,537 rows and 8 variables including gender, age ranges, date (yyyy-mm-dd) from October 1998 to June 2022, 2011 SA4 labour regions and populations by the above employment categories.  The table had ABS branding and additional data in the first 3 rows which were skipped during the download otherwise the data was well labelled in a proper table format.
+
+
+```{r data4, echo=FALSE, message=FALSE, warning=FALSE}
+
+temp4 = tempfile(fileext = ".xlsx")
+data_url4 <- "https://www.abs.gov.au/statistics/labour/employment-and-unemployment/labour-force-australia-detailed/jun-2022/RM1.xlsx"
+
+download.file(data_url4, destfile = temp4, mode = "wb")
+
+pop_df2 <- readxl::read_excel(temp4, sheet = "Data 1", skip=3)
+
+```
+
+### Data set 5: Employment, Unemployment and participation rates by state
+
+This data set was downloaded as an xlsx file from the Labour Market Insights website and contains data on three labour rates for workers 15 years and older:
+
+* Unemployment rate
+* Participation rate
+* Employment rate
+
+The extract contains 8,145 rows and 6 variables including SA4 employment region, state, date (yyyy-mm-dd) from June 2007 to June 2022 and monthly rates for each of the 3 numeric variables.  The table had no unnecessary headers or footers in the sheet and the variables were well labeled.
+
+```{r data5, echo=FALSE, message=FALSE, warning=FALSE}
+
+temp = tempfile(fileext = ".xlsx")
+data_url <- "https://labourmarketinsights.gov.au/media/ki3blisv/employment-region-time-series_june-2022.xlsx"
+
+download.file(data_url, destfile = temp, mode = "wb")
+
+participation_df <- readxl::read_excel(temp, sheet = "SA4 based ERs")
+```
+
+### Additional reference tables required for data cleaning and matching
+
+Data frame 4 did not include state names but provided SA4 regional codes from 2011 and data frame 5 used only State abbreviations.  To accurately map these codes and abbreviations to full state/territory names, it required a combination of three additional reference tables.  
+
+The following will provide information on the data frames and sources. 
+
+**Reference table 1: 2016 SA4 Region codes by State**
+
+This data set was downloaded as an xlsx file from the Australian Bureau of Statistics website and contains the 2016 SA4 codes and associated state/territory names. The table had no unnecessary headers or footers in the sheet and the variables were well labeled.
+
+```{r data6, echo=FALSE, message=FALSE, warning=FALSE}
+temp5 = tempfile(fileext = ".xlsx")
+data_url5 <- "https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs-edition-3/jul2021-jun2026/access-and-downloads/allocation-files/SA4_2021_AUST.xlsx"
+
+download.file(data_url5, destfile = temp5, mode = "wb")
+
+SA4_ref_df <- readxl::read_excel(temp5, sheet = "SA4_2021_AUST")
+
+```
+
+**Reference table 2: SA4 mapping table to link 2011 codes to 2016 codes**
+
+This data set is an xls file download from the Australian Bureau of Statistics website and read into the RMD file from the project folder. It contains 6 columns of data which will allow us to mutate a States variable by mapping the 2011 SA4 codes used in the Data frame 4 data with 2016 SA4 codes in Reference table 1 and associated state/territory names. 
+
+The table has 114 rows and 6 variable which include random unnecessary rows which needed to be cleaned as well as columns to be removed.
+
+```{r data7, echo=FALSE, message=FALSE, warning=FALSE}
+SA4_mapping_df <- read_excel("CG_SA4_2011_SA4_2016.xls", sheet = "Table 3", skip = 5)
+
+```
+
+**Reference table 3: State acronym and state long name**
+
+Reference table 3 was scraped from the Biographical Database of Australia webpage which contains a list of abbreviations for states, provinces and countries. The table includes 285 rows and 3 variables which will be filtered.
+
+This reference set will allow me to map the state/territory abbreviations used in Data frame 5 with full state names to allow for data joins between tables.
+```{r data8, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+
+state_table <- read_html("https://www.bda-online.org.au/help/bda-conventions/abbreviations-states/")
+
+length(html_nodes(state_table, "table"))
+
+state_table_df <- html_table(html_nodes(state_table, "table")[[1]]) %>% 
+  na_if("") %>% 
+   mutate_if(is.character, str_trim)
+
+```
+
+# Step 2: Tidy the data and fix initial struture of tables
+
+**Set defaults**
+
+The data contains a variety of time periods for the data.  The analysis will be limited to 5 years from 2017 to 2021 using the December calendar year end data in each instance.  To assist with the data cleaning, I am also setting initial gender options to better automate the code but will drop Persons as we go along to focus on Male and Female gender splits.
+
+```{r defaults, echo=FALSE, message=FALSE, warning=FALSE}
+target_yrs <- c("2017","2018","2019","2020","2021")
+gender_options <- c("Males", "Females", "Persons")
+
+```
+
+## Data set 1: Population by gender and state 2017-2021 
+
+The population data is presented in a wide format with 9 state related columns of population totals. The first column of the data set is labelled "1" and contains two different variables - gender and year dates -  which need to be carefully split into their own columns. 
+
+#### Inspect and convert to usable data
+
+The following changes needed to be made to the raw data to ensure it was ready to be used in the project.
+
+* Removed extra blank and unnecessary lines from the top and bottom of the table 
+* Renamed column 1 to Year
+
+
+#### Tidy the data
+
+The data was not tidy as it included 2 variable types in column 1 an was set in a wide format for dates.  The data was tidied by:
+
+* Mutate a new factor column to hold the Gender variables and repeat each 25 times to align to the original date structure and filter out the Persons gender observations
+* Remove the "Australia" column from the variables so it includes only states and territories
+* Pivot the States long to create two columns and set the class of the variable: one with state names as factors and one with the population values as numeric
+* Filter the Year values to the target years
+* Transform the year to a date then a factor
+
+The result is a table of 80 rows with 4 variables: Year, Gender, States and Population.
+```{r population, echo=FALSE, message=FALSE, warning=FALSE,results='hide'}
+
+population <- population_df[-c(1,77:79),]
+
+population <- population %>% 
+  tidyselect:::rename(Year = 1) %>% 
+  mutate_all(na_if,"") %>% 
+  mutate(Gender = as.factor(rep(gender_options, each=25)),) %>% 
+  relocate(Gender, .after = Year) %>% 
+  filter(Gender != "Persons") %>% 
+  select(- Australia) %>%
+  pivot_longer(cols = 3:ncol(population),
+               names_to = "States",
+               values_to = "Population") %>%
+  filter(!is.na(Population)) %>%
+  filter(Year %in% target_yrs) %>%
+  mutate(States = as.factor(States)) %>%
+  mutate(Population = as.numeric(Population)) %>%
+  mutate(Year = as.Date(as.character(Year), format = "%Y")) %>%
+  mutate(Year = as.integer(year(Year))) %>% 
+  mutate(Gender = fct_drop(Gender)) 
+
+names(which(colSums(is.na(population))>0))
+
+```
+
+```{r ,render=lemon_print, echo=FALSE, message=FALSE, warning=FALSE}
+head(population,3)
+```
+
+
+## Data set 2: Earnings by state 2017-2021
+
+Similar to the above data, the earnings data - average hourly rate - is presented in a wide format with 9 state related columns of population totals. The first column of the data set is labelled "1" and contained 3 different variables - gender, year dates and employment status groupings -  which need to be carefully split into their own columns. 
+
+#### Inspect and convert to usable data
+The same steps were followed as in Data frame 1 by removing extra lines and renaming column 1 to Year.
+
+#### Tidy the data
+The data was not tidy as it included 3 variable types in column 1 and was set in a wide format for dates.  The data was tidied by:
+
+* Mutate a new factor column to hold the Gender variables and repeat each 58 times to align to the original date structure,    filter these Genders out of the Year column and filter the Persons gender observations out of the Gender column
+* Mutate a new factor column for Employment status of 3 types: Full-time, Part-time and Total and repeat each 19 times to map to the remaining year observations. Eventually also filter out the Total factor.
+* Transform the year to a date then a factor
+* Pivot the states long to create two columns and set the class of the variable: one with state names as ordered factors and one with the earnings per hour values as numeric and round numbers to 2 decimal places
+* Remove the Australia factor from the States variables so it includes only states and territories
+* Filter the Year values to the target years
+
+The end result is a table with 160 observations of 5 variables: Year, Gender, States, Employment status and Earnings per hour.
+
+```{r earnings, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+Earnings <- earnings_df[-c(1,176:178),]
+
+Earnings <- Earnings %>% 
+  tidyselect:::rename(Year = 1) %>% 
+  mutate_all(na_if,"") %>% 
+  mutate(Gender = as.factor(rep(c("Persons", "Males", "Females"),
+                                each=58)),) %>% 
+  relocate(Gender, .after = Year) %>%  
+  filter(Year != "PERSONS", Year != "MALES" & Year != "FEMALES") %>%
+  mutate(Employment_status = as.factor(rep(c("Full-time", "Part-time","Total"), times = 3,each = 19))) %>%
+  relocate(Employment_status, .after = Gender) %>% 
+  mutate(Year = as.Date(as.character(Year), format = "%Y")) %>%
+  mutate(Year = as.integer(year(Year))) %>% 
+  filter(Gender != "Persons") %>% 
+  filter(Employment_status != "Total") 
+
+Earnings <- Earnings %>%
+  pivot_longer(cols = 4:ncol(Earnings),
+               names_to = "States",
+               values_to = "Earnings_hr") %>%
+  filter(Year %in% target_yrs) %>%
+  filter(States != 'Australia') %>% 
+  mutate(States = factor(States, levels =  c("New South Wales", "Victoria", "Queensland", "South Australia", "Western Australia", "Tasmania", "Northern Territory", "Australian Capital Territory"))) %>% 
+  mutate(Earnings_hr = round(as.numeric(Earnings_hr),2)) %>% 
+  # mutate(Year = fct_drop(Year)) %>% 
+  mutate(Gender = fct_drop(Gender)) %>% 
+  mutate(Employment_status = fct_drop(Employment_status))
+ 
+names(which(colSums(is.na(Earnings))>0))
+
+```
+
+```{r ,render=lemon_print, echo=FALSE, message=FALSE, warning=FALSE}
+head(Earnings,3)
+```
+
+
+## Data set 3: Working hours by state 2017-2021
+
+The working hours data includes variables related to Year, Gender, State, a main job category, job hour ranges, number of employees and total hours worked in the month. This was the largest table downloaded as it provided data by month and year from January 1991 to June 2022.
+
+#### Tidy the data
+This data frame was downloaded clean and only requires some steps to re-shape the data into a tidy format. This transformation required additional attention as the columns included two variables related to the number of workers - by full-time and part-time status - and two additional variables related to actual hours worked, also by employment status.  The steps taken include:
+
+* The date field labelled Month came in a POSIXct format which was converted to a class Date then separated into Year, Month and Day variables.  The Year was then filtered to the target date range and changed to a factor.  The Month was also filtered to the month of December then the Month and Day variables were removed.
+* The variable containing the state names was renames to States and mutated to a factor with levels.
+* The sex variable was also mutated to a factor and renamed Gender
+* Additional variables related to the main job and job hour ranges were also renamed and mutated into factors with levels.
+
+To reshape the numeric variables to make them tidy, it was necessary to first make the data long and then to pivot it wide again.  
+
+* Rename all the columns involved so we could extract a new employment status fields linked to the number of employees and hour worked. The renaming required creating a temporary dual named variable which could be later separated at the underscore. The names included employment status (full-time and part-time) separated by an underscore before the count type (employed or hours)
+* Pivot the 4 columns longer into two variables: a character status and count type variable and the numeric variable called value
+* Separate the combine status and count type variable into an Employment status variable and a measure type variable while discarding the original combined temporary variable.
+* Pivot into a wide format the measure type (employee count or hours) and the original value field
+* The final code set the Employee status to a factor, renaming the Worker hours variable and ensuring both of the numeric values were numeric, rounded and multiplied by 1,000 to return the values to whole numbers rather than the original numbers which had been divided by 1,000.
+
+Of note in the data are some values of 0 where the Job hours range indicated the employee had not worked during that period - perhaps because they were on leave.
+
+
+```{r workers, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+class(workers_df$Month)
+
+worker <- workers_df %>%
+  mutate(Month  = as.Date.POSIXct(Month)) %>% 
+  tidyr::separate(Month, c('Year', 'Month', 'Day'), sep = "-",remove = FALSE) %>% 
+  filter(Year %in% target_yrs) %>%
+  mutate(Year = as.Date(as.character(Year), format = "%Y")) %>%
+  mutate(Year = as.integer(year(Year))) %>% 
+  filter(Month == '12') %>% 
+  select(- Month, - Day) %>% 
+  tidyselect:::rename(States = "State and territory (STT): ASGS (2011)") %>%
+  mutate(States = factor(States, levels =  c("New South Wales", "Victoria", "Queensland", "South Australia", "Western Australia", "Tasmania", "Northern Territory", "Australian Capital Territory"))) %>%
+  tidyselect:::rename(Gender = Sex) %>% 
+  mutate(Gender= as.factor(Gender)) %>% 
+  relocate(Gender, .after = Year) %>% 
+  tidyselect:::rename(Main_job = "Status in employment of main job") %>% 
+  mutate(Main_job = factor(Main_job, levels = c("Employee", "Owner manager of incorporated enterprise with employees", "Owner manager of incorporated enterprise without employees", "Owner manager of unincorporated enterprise with employees", "Owner manager of unincorporated enterprise without employees", "Contributing family worker")))%>%
+  tidyselect:::rename(Job_hours_range = "Hours actually worked in all jobs") %>%   mutate(Job_hours_range = factor(Job_hours_range, levels = c("Did not work (0 hours)", "1-9 hours", "10-19 hours", "20-29 hours", "30-34 hours", "35-39 hours", "40-44 hours", "45-49 hours", "50-59 hours", "60-69 hours", "70 hours or more")))
+  
+Worker_pivot_lg <- worker %>%
+  tidyselect:::rename("Full-time_Employed" = "Employed full-time ('000)") %>% 
+  tidyselect:::rename("Part-time_Employed" = "Employed part-time ('000)") %>%
+  tidyselect:::rename("Full-time_Hours" = "Number of hours actually worked in all jobs (employed full-time) ('000 Hours)") %>%
+  tidyselect:::rename("Part-time_Hours" = "Number of hours actually worked in all jobs (employed part-time) ('000 Hours)") %>%
+  pivot_longer(cols = 6:ncol(worker),
+               names_to = "Status_Count",
+               values_to = "Value") %>%
+  tidyr::separate(Status_Count, c('Employment_status', 'Measure'), sep = "_",remove = FALSE) %>%
+  select(- Status_Count) %>%
+  pivot_wider(
+    names_from =  Measure,
+    values_from = Value
+  )
+
+Worker2 <- Worker_pivot_lg %>% 
+  mutate(Employment_status = as.factor(Employment_status))%>%
+  tidyselect:::rename(Worker_numbers = "Employed") %>%
+  mutate(Worker_numbers = round(Worker_numbers*1000)) %>%
+  mutate(Hours = round(Hours*1000))
+
+names(which(colSums(is.na(Worker2))>0))
+      
+
+```
+
+```{r, render=lemon_print, echo=FALSE, message=FALSE, warning=FALSE}
+head(Worker2,3)
+```
+
+
+```{r references, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+
+SA4_ref <- SA4_ref_df %>% 
+  tidyselect:::rename(States = "STATE_NAME_2021") %>% 
+  tidyselect:::rename(SA4_Region = "SA4_CODE_2021") %>%
+  select(SA4_Region, States) %>% 
+  mutate(States = factor(States, levels =  c("New South Wales", "Victoria", "Queensland", "South Australia", "Western Australia", "Tasmania", "Northern Territory", "Australian Capital Territory"))) %>% 
+  mutate(SA4_Region = as.integer(SA4_Region)) %>% 
+  filter(!(is.na(SA4_Region) | is.na(States))) 
+
+names(which(colSums(is.na(SA4_ref))>0))
+
+SA4_mapping <- SA4_mapping_df[-c(1),]
+
+SA4_mapping <- SA4_mapping %>% 
+  select(SA4_CODE_2011, SA4_CODE_2016) %>% 
+  na.omit() %>% 
+  tidyselect:::rename(SA4_Region = SA4_CODE_2011) %>% 
+  mutate(SA4_Region = as.integer(SA4_Region)) %>% 
+  mutate(SA4_CODE_2016 = as.integer(SA4_CODE_2016))
+
+names(which(colSums(is.na(SA4_mapping))>0))
+str(SA4_mapping)
+
+State_table <- state_table_df %>% 
+  tidyselect:::rename(Country = "Country Code") %>%
+  tidyselect:::rename(States = "Name") %>%
+  tidyselect:::rename(State_code = "Code") %>%
+  filter(Country == "AUS") %>% 
+  select(- Country)
+
+names(which(colSums(is.na(State_table))>0))
+str(State_table)
+
+```
+
+## Data set 4: Employed population by gender, ASGS location, age ranges and employment status
+
+The data on employed population by gender, age range and employment distribution is one of the richer data sets in this report.  As such, the data was processed twice towards achieving 2 different outcomes to inform the final merged data set.
+
+* Age ranges allow us to look at the absolute and proportional levels of employees by age
+* The distribution of counts between full-time, part-time, unemployed and those not in the labour force will also allow this proportionality to be reviewed
+
+The population by age range and employment status data includes variables related to dates( October 1998 to June 2022), gender, Statistical Area 4 (SA4) regions (2011) and number of employees by employment status. The transformation of this data included data from the 2 reference tables.  The cleaning of these reference data sets is described in the **Appendix under Step 2: Cleaning of reference table data sets** 
+
+The inspection, cleaning and tidying of the data will be described in three parts:
+
+* Part A: General tidying of the data set
+* Part B: Population by age range
+* Part C: Population by employment status
+
+
+### Part A: General tidying
+
+#### Inspect and tidy the data
+
+The data was downloaded in a table that was well structured, with variable labels but with employee counts in a wide format across 4 employment status types. The primary challenge was to clean the SA4 regional information using 2 reference tables. The primary data conversion steps included:
+
+* The date field labelled Month came in a POSIXct format which was converted to a class Date then separated into Year, Month and Day variables.  The Year was then filtered to the target date range and changed to a factor.  The Month was also filtered to the month of December then the Month and Day variables were removed.
+* Sex was renamed to Gender and converted to a factor
+* Age grouping were made into factors
+* The SA4 labour market column was separated into an SA4 region  digit code and an ASGS description based on the space between the two elements. The code was changes to an integer and the ASGS description removed from the data frame as it was not required.
+* A left join by SA4 2011 code to the SA4 mapping table was done by first grouping SA4 regions and then mapping to the first occurrence of the SA4 2016 code.  The original SA4 2011 variable was removed.
+* A second left join by SA4 2016 codes was done to the SA4 reference table which brought in the States variable with state names.  The States were mutated into factors with levels. Finally the SA4 2016 region code was removed.
+* The columns with the employees by employment status were renamed to prepare them to be pivoted longer.
+
+### Part B: Population by age range
+
+#### Tidy the data
+
+With the primary data cleaning complete, we now begin to shape the data specifically for our two outcomes.  Population by age range further required the following steps
+
+* To create the pivot, the data was grouped by Year, Gender, Age groups and States, the number of workers were summarised into a total and the columns were pivoted into Employment status and Worker numbers.
+* The Employment status was mutated into a factor and the Worker numbers were mutated to class numeric, rounded and multiplied by 1,000 to return the values to whole numbers rather than the original numbers which had been divided by 1,000.
+
+#### Create transformations
+
+Lastly, a new column to calculate the proportion of employees by Age group was created by:
+
+* Grouping the data by Year, Gender, States and Employment status
+* Totaling the number of Workers by age range
+* Mutating a proportion of employees by Age range: the number of workers per age group as per the sort groupings and dividing it by the total number of workers for that same grouping. This gives us the distribution of age ranges working in each employment status which add up to 1.
+* The subtotal column is then removed and the data better arranged
+
+
+```{r population_by_age, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+
+pop_general <- pop_df2 %>%
+  mutate(Month  = as.Date.POSIXct(Month)) %>% 
+  tidyr::separate("Month", c('Year', 'Month', 'Day'), sep = "-",remove = FALSE) %>% 
+  filter(Year %in% target_yrs) %>%
+  mutate(Year = as.Date(as.character(Year), format = "%Y")) %>%
+  mutate(Year = as.integer(year(Year))) %>%
+  filter(Month == '12') %>%
+  select(- Month, - Day) %>% 
+  tidyr::separate("Labour market region (SA4): ASGS (2011)", into = c('SA4_Region', 'ASGS_Desc'), sep = "\\s",remove = FALSE) %>% 
+  mutate(SA4_Region = as.integer(SA4_Region)) %>% 
+  tidyselect:::rename(Gender = Sex) %>% 
+  mutate(Gender= as.factor(Gender)) %>%
+  relocate(Gender, .after = Year) %>% 
+  select(- "Labour market region (SA4): ASGS (2011)", - ASGS_Desc) %>% 
+  mutate(Age = as.factor(Age))
+
+pop_general2 <- pop_general %>%
+  left_join(SA4_mapping %>% 
+              group_by(SA4_Region) %>% 
+            slice(1), by = ('SA4_Region' = 'SA4_Region')) %>% 
+  select(- SA4_Region) %>% 
+  relocate(SA4_CODE_2016, .after = Age) %>% 
+  tidyselect:::rename("SA4_Region" = "SA4_CODE_2016") %>%
+  left_join(SA4_ref)%>%
+  relocate(States, .before = SA4_Region) %>%
+  mutate(States = factor(States, levels =  c("New South Wales", "Victoria", "Queensland", "South Australia", "Western Australia", "Tasmania", "Northern Territory", "Australian Capital Territory"))) %>%
+  select(- SA4_Region) %>%
+  tidyselect:::rename("Full-time" = "Employed full-time ('000)") %>%
+  tidyselect:::rename("Part-time" = "Employed part-time ('000)") %>%
+  tidyselect:::rename("Unemployed" = "Unemployed total ('000)") %>%
+  tidyselect:::rename("Non-worker" = "Not in the labour force (NILF) ('000)")
+
+ pop_by_age <- pop_general2 %>%
+   group_by(Year, Gender, Age, States) %>%
+     summarise_each(funs(sum))%>%
+     pivot_longer(cols = 5:ncol(pop_general2),
+                names_to = "Employment_status",
+                values_to = "Worker_numbers") %>% 
+   ungroup() %>% 
+   mutate(Employment_status = as.factor(Employment_status)) %>% 
+   mutate(Worker_numbers = round(Worker_numbers*1000))
+ 
+Population_by_age <- pop_by_age %>% 
+  group_by(Year, Gender, States, Employment_status) %>%
+  dplyr::mutate(sub_total = sum(Worker_numbers)) %>% 
+  mutate(Proportion_by_age_range = Worker_numbers/sub_total) %>%
+  ungroup() %>% 
+  select(- sub_total) %>% 
+  arrange(Year, Gender, States, Employment_status)
+
+names(which(colSums(is.na(Population_by_age))>0))
+
+```
+
+```{r ,render=lemon_print, echo=FALSE, message=FALSE, warning=FALSE}
+head(Population_by_age,3)
+```
+
+### Part C: Population by employment status
+
+#### Tidy the data
+
+Population by employment status followed similar steps:
+
+* Firstly, we removed the Age column from the data set
+To create the pivot, the data was grouped by Year, Gender and States, the number of workers were summarised into a total and the columns were pivoted into Employment status and Worker numbers.
+* The Employment status was mutated into a factor and the Worker numbers were mutated to class numeric, rounded and multiplied by 1,000 to return the values to whole numbers rather than the original numbers which had been divided by 1,000.
+
+#### Create transformations
+
+Lastly, a new column to calculate the proportion of employees by Age group was created by:
+
+* Grouping the data by Year, Gender, States and Employment status
+* Totaling the number of Workers by employment status
+* Mutating a proportion of employees by employment status: the number of workers per employment status as per the sort groupings and dividing it by the total number of workers for that same groupings which add up to 1.
+* The subtotal column is then removed
+
+
+```{r population_by_status, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+
+pop_general3 <- pop_general2 %>%
+   select(-Age)
+
+pop_by_status <- pop_general3 %>%
+   group_by(Year, Gender, States) %>%
+     summarise_each(funs(sum))%>%
+     pivot_longer(cols = 4:ncol(pop_general3),
+                names_to = "Employment_status",
+                values_to = "Worker_status_numbers") %>%
+  ungroup() %>% 
+   mutate(Employment_status = as.factor(Employment_status)) %>%
+   mutate(Worker_status_numbers = round(Worker_status_numbers*1000))
+
+Population_by_status <- pop_by_status %>% 
+  group_by(Year, Gender, States) %>%
+  dplyr::mutate(sub_total = sum(Worker_status_numbers)) %>% 
+  mutate(Proportion_by_emp_status = Worker_status_numbers/sub_total) %>% 
+  ungroup() %>% 
+  select(- sub_total)
+
+names(which(colSums(is.na(Population_by_status))>0))
+
+```
+
+```{r,render=lemon_print, echo=FALSE, message=FALSE, warning=FALSE}
+head(Population_by_status,3)
+```
+
+
+## Data set 5: Employment, Unemployment and participation rates by year and state
+
+The final data set to clean is the participation rate table which provides the overall rates of Employment, Unemployment and Participation rates by state and year.  Specific definitions for these rates can be found in the "Definitions" section of the appendix. The data also included rates for all months between June 2007 and June 2022.
+
+#### Inspect and tidy the data
+
+While the table was relatively clean in its shape, it required the use of two reference tables to link the Employment region name to an employment region code in the SA4 reference table and a State names table to link the state acronyms to a full state or territory name. Some of these steps include:
+
+* A table headers included white space in the column labels so all were re-named with a string replace to remove the additional characters
+* The date field labelled Date came in a POSIXct format which was converted to a class Date then separated into Year, Month and Day variables by the hyphen.  The Year was then filtered to the target date range and changed to a factor.  The Month was also filtered to the month of December then the Date, Month and Day variables were removed.
+* The State/Territory column was renamed and the NSW/ACT characters mutated to ACT using 'case_when'
+* A left join brought in the State table which allowed the state codes to be mapped to State names which were then mutate to factors with levels
+* The state code and employment region were then removed as they were unnecessary for the analysis.
+* To create new participation rates by Year and States, the data was grouped and summarised by mean to provide the overall mean participation rate for each of the columns.
+* Each of the Employment, Unemployment and Participation rate variables were then renamed and converted to rounded numeric values to two decimal places.
+
+
+```{r participation, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+ 
+class(participation_df$Month)
+
+ Participation <-participation_df %>% 
+  rename_all(~str_replace_all(., "\\s+", "")) %>% 
+  mutate(Date = as.Date.POSIXct(Date)) %>% 
+  tidyr::separate("Date", c('Year', 'Month', 'Day'), sep = "-",remove = FALSE) %>% 
+  filter(Year %in% target_yrs) %>%
+  mutate(Year = as.Date(as.character(Year), format = "%Y")) %>%
+  mutate(Year = as.integer(year(Year))) %>%
+  filter(Month == '12') %>% 
+  select(- Month, - Day, - Date) %>% 
+   tidyselect:::rename(State_code = "State/Territory") %>% 
+   mutate(State_code = case_when(State_code == 'NSW/ACT' ~ "ACT",
+                         TRUE ~ State_code))%>%
+  left_join(State_table) %>% 
+   relocate(States, .before = Year) %>%
+   mutate(States = factor(States, levels =  c("New South Wales", "Victoria", "Queensland", "South Australia", "Western Australia", "Tasmania", "Northern Territory", "Australian Capital Territory"))) %>%
+   select(- State_code, - 'EmploymentRegion') %>%
+   group_by(Year,States) %>%
+     summarise_each(funs(mean))%>%
+   ungroup() %>% 
+  tidyselect:::rename("Unemployment_rate" = "UnemploymentRate(15+)") %>%
+  tidyselect:::rename("Participation_rate" = "ParticipationRate(15+)") %>%
+  tidyselect:::rename("Employment_rate" = "EmploymentRate(15-64)") %>% 
+  mutate(Unemployment_rate = round(as.numeric(Unemployment_rate),2)) %>% 
+  mutate(Participation_rate = round(as.numeric(Participation_rate),2)) %>% 
+  mutate(Employment_rate = round(as.numeric(Employment_rate),2))
+
+ names(which(colSums(is.na(Participation))>0))
+ 
+  
+```
+
+```{r, render=lemon_print, echo=FALSE, message=FALSE, warning=FALSE}
+head(Participation,3)
+```
+
+
+# Step 3 and 4: Merge Data sets and create new variables from existing ones
+
+With the completion of the cleaning, tidying, data type and class conversions, relabeling of variables and mutating the final fields, the data sets are ready to be merged and to create new variables from existing ones.
+
+## Data set 3: Worker data
+
+The Worker data set forms the basis for the final table.  It starts with Year data from 2017 to 2021, Genders of female and male, 8 States factors, a Main job category, Job-hours ranges from 'Did not work (0 hours)' to '70 hours or more' per week, and Employment status of Full-time or Part-time work, the number of workers in each observation and the number of hours worked in the period - the month of December for each of the years. All variables are factors except the Worker numbers and Worked hours which are numeric.
+
+## Data set 2: Earnings data
+
+#### Create transformations
+
+When the Earnings data set is merged via a left join, it brings in an hourly rate which allows us to create a new measure of Earnings per week.  To calculate this new variable a few steps are undertaken:
+
+* The Job hours range is separated by first removing the 'hours' wording and then separating the hours range into minimum and maximum hours columns ie. 40-44 hours becomes separate columns of 40 and 44.
+* A new Average hours column is created by calculating the mean between the two numeric columns - so 40 and 44 are calculated to a mean of 42.
+* From here, we can multiply the Average hours column by the Earnings per hour column to mutate an Earnings per week column
+* As the Main job column is not very helpful, it is replaced by a new Job status column with the only factor of "Employed" being assigned to each observation as we will soon be adding data related to unemployed portions of the population.
+* The variables of Min hours, Max hours and Job hours range are removed as they have served their purpose in calculating new variables and will create issues with new data to be joined.
+*However, with the Job hours range variable gone, the data in the other columns needs to be summarised by Year, Gender, States, Job status and Employment status:
+    + Worker numbers and Hours need to be summed or added together
+    + Earnings per hour, Hourly rate and Earnings per week need to be averaged
+
+## Data sets 1, 5 and 4a: Population, Participation rates and Population by status
+
+The next step is to join 3 more data sets by first preparing the Employment table grouping the data by Year, Gender, States, Job status and Employment status.
+
+* A Population numeric column is added by a left join with the Population table by Year, Gender and States
+* The Participation table is left joined by Year and States to bring in 3 columns of data: Unemployment rate, Participation rate and Employment rate
+* The Population by Status table is right joined to the Employment table as it has additional data we want to add to enrich the current data.  By bringing in new factors for Employment status including Non-worker and Unemployed, it also brings in a new count of Worker numbers and the associated Proportion of workers by employment status which leaves many observations with missing values for the first time.  These will be cleaned in Step 5.
+
+#### Create transformations
+
+The addition of the Population by status table provides a unique situation where we have Worker numbers for Full-time and Part-time Employment status' already associated with our variables of Year, Gender, States and Employment status which we have summarised when we removed the Job hours range.  This new table has brought in a Job Hours variable as well with Full-time, Part-time and other categories.  Would they be similar or have the earlier calculations and data manipulation resulted in dis-similar ranges?  
+
+As a data check, I mutated a Population error variable to compare the two Worked hours columns which is simply a calculation of the original Worker numbers column minus the new Worker status numbers column.  The result was a relief!  It was a range from +5 to -5 in a normal distribution around the mean of 0.  
+
+## Data set 4a: Population by age range
+
+The final data set to add to my merged table was the Population by age data.  Again, this was a right join by Year, Gender, States and Employment status to bring in rows related to age ranges, the number of Workers by age range and the Proportion of employee by age range. The final merge once again resulted in more missing values which were then cleaned in the next section.
+
+
+```{r merge1, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+
+employment_df <- Worker2 %>% 
+  left_join(Earnings, by = c("Year" = "Year", "Gender" = "Gender", "States" = "States", "Employment_status" = "Employment_status")) %>% 
+  mutate(Job_hours_range_new = case_when(Job_hours_range == "Did not work (0 hours)" ~ "0-0 hours",
+                                Job_hours_range == "70 hours or more" ~ "70-70 hours",
+                         TRUE ~ as.character(Job_hours_range)))%>%
+  tidyr::separate("Job_hours_range_new", c('Hours_range', 'Hour'), sep = "\\s",remove = FALSE) %>% 
+  tidyr::separate("Hours_range", c('Min_hrs', 'Max_hrs'), sep = "-",remove = FALSE) %>% 
+  select(- Hour, - Job_hours_range_new, - Hours_range) %>% 
+  mutate(Min_hrs = as.numeric(Min_hrs)) %>% 
+  mutate(Max_hrs = as.numeric(Max_hrs)) %>% 
+  arrange(Year, Gender, States, Employment_status)
+
+employment <- employment_df %>% 
+  mutate(Average_hrs = rowMeans(select(employment_df, Min_hrs:Max_hrs), na.rm = TRUE)) %>%
+  mutate(Average_hrs = round(as.numeric(Average_hrs),2)) %>% 
+  mutate(Earnings_week = round((Earnings_hr*Average_hrs),2)) %>% 
+  select(- Min_hrs, - Max_hrs) %>% 
+  mutate(Job_status = as.factor("Employed")) %>% 
+  relocate(Job_status, .after = States) %>% 
+  select(- Main_job, - Job_hours_range)
+
+employment2 <- employment %>% 
+  group_by(Year, Gender, States,Job_status, Employment_status) %>% 
+  dplyr::summarise(.,across(Worker_numbers:Hours,sum),across(Earnings_hr:Earnings_week,mean))%>%
+  left_join(population, by = c("Year" = "Year", "Gender" = "Gender", "States" = "States")) %>%
+  left_join(Participation, by = c("Year" = "Year", "States" = "States"))
+
+employment_3 <- employment2 %>% 
+  right_join(Population_by_status, by = c("Year" = "Year", "Gender" = "Gender", "States" = "States", "Employment_status" = "Employment_status"), na_matches = "na") %>% 
+  arrange(Year,Gender, States, Employment_status) %>% 
+  relocate(Worker_status_numbers, .after = Worker_numbers) %>% 
+  relocate(Proportion_by_emp_status, .after = Worker_status_numbers) %>% 
+  mutate(Population_error = Worker_numbers-Worker_status_numbers) %>% 
+  relocate(Population_error, .after = Worker_status_numbers) %>%
+  select(-Average_hrs) %>% 
+  mutate(Gender = fct_drop(Gender))
+
+Error <- count(employment_3,'Population_error')
+
+Employment_final <- employment_3 %>% 
+  right_join(Population_by_age, by = c("Year" = "Year", "Gender" = "Gender", "States" = "States", "Employment_status" = "Employment_status"), na_matches = "na") %>% 
+  relocate(Age, .after = Employment_status) %>% 
+  tidyselect:::rename("Workers_by_age" = "Worker_numbers.y") %>%
+  relocate(Workers_by_age, .after = Age) %>% 
+  select(- Worker_numbers.x, - Population_error) %>% 
+  relocate(Proportion_by_age_range, .after = Workers_by_age) %>% 
+  relocate(Employment_status, .after = Proportion_by_age_range)
+
+names(which(colSums(is.na(Employment_final))>0))
+
+
+```
+
+```{r, fig.asp = .3, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(Error) +
+    geom_bar(aes(x=Population_error, y=freq), stat="identity", fill = "cornflower blue", 
+               colour = "dark blue")+ 
+  scale_x_continuous(breaks=seq(-6,6,1))+
+  labs(title = "Distribution of population error",  x = "Population error", y = "Frequency")
+```
+
+```{r, render=lemon_print, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+
+# head(Employment_final, 3)
+
+```
+
+
+#	Step 5: Scan for missing values and inconsistencies 
+
+In Steps 3 and 4, a number of missing values were introduced through right joins of the Population by age range and Population by employment status tables. The missing values were created as these tables brought in additional data or additional granularity of data for which there was no match to existing observations.  The variables we need to inspect and add or impute missing values for are:
+
+* Job status
+* Hours
+* Earnings per hour
+* Earnings per week
+* Population
+* Unemployment rate
+* Participation rate
+* Employment rate
+
+For each, we will examine the circumstances related to the variable and choose the right steps to follow.
+
+**Job Status**
+
+Job status was introduced when we added the Earnings data table to our Employment data.  At the time, the observations only included "Employed" people.  The missing variables related to this factor are for the observations of those not employed.  As such, the missing values are filled with the factor "Not employed
+
+
+```{r missing1, echo=FALSE, message=FALSE, warning=FALSE,results='hide'}
+clean1 <- Employment_final %>% 
+  mutate(Job_status = fct_explicit_na(Job_status, "Not employed"))
+```
+
+**Population, Employment status, Worker status numbers and Age range**
+
+Filling the Population missing values requires that we go back a few steps and create some new calculations from the Population by status analysis.  This is the step where unemployed people were brought into the data sets.  While the data provides worker numbers on Unemployed and those not in the workforce, if you were to add up all employed and unemployed people, there is still a difference between that total and the total population.  This is a group 'missing' from the overall table and would be comprised of children 14 and under and the elderly who are not counted in the participation rates for employment.
+
+The steps taken to clean these missing values also added some additional missing values so I will step you though the process.
+
+* Starting with a version of the population by status with 4 columns: Year, Gender, States, Employment status and Worker numbers, the Employment status column was removed and the worker numbers summarised by Year, Gender and States.
+* The Population table was left joined by the same grouping and a new variable called Missing was mutated to hold the value of the population less the summarised Worker status numbers.
+* A new column called Employment status was created as a factor and assigned the value "Unemployed"
+* The Population and Worker status numbers were removed.
+* The Missing column containing the difference between the Population and known workforce numbers was renamed to Worker status numbers as this final table now contains only data related to the Missing population of children and elderly.
+
+To add this new specialty table of those not counted in the Employee final table, we binded it by row to the original table and arranged the table by Year, Gender, States and Job status. As the Age range for these new rows were missing, a factor of "Child/Elderly" replaced any rows with NA.
+
+**Hours, Earnings per hour and Earnings per week**
+
+At this point, the columns with missing values related to unemployed people such as Hours, Earnings per hour and Earning per week all needed to be set to 0 as these do not apply to the unemployed.
+
+**Population, Unemployment rate, Participation rate and Employment rate**
+
+The missing values for these variables are set by Date and States. A fill function was used after grouping the variables to ensure the correct value filled for each row.
+
+**Workers by age**
+
+Adding the Child elderly factor meant there was no value for Workers by age.  This was coalesced with the Employment status number to bring in the same value.
+
+**Proportion by employee status and Proportion by age range**
+
+While there were originally no missing values related to these proportions, when we added the missing population amounts for the Child and Elderly age range, the proportions ended up with missing values.  These were re-calculated using the original methodology we used to clean Data tables 4 re-setting the proportions.
+
+
+```{r missing2, echo=FALSE, message=FALSE, warning=FALSE,results='hide'}
+Not_counted <- pop_by_status %>% 
+  select(-Employment_status) %>% 
+  group_by(Year, Gender, States) %>% 
+  summarise_each(funs(sum)) %>% 
+  left_join(population) %>% 
+  mutate(missing = Population-Worker_status_numbers) %>% 
+  mutate(Employment_status = as.factor("Unemployed")) %>% 
+  ungroup() %>% 
+  select(-Population, -Worker_status_numbers) %>% 
+  tidyselect:::rename("Worker_status_numbers" = "missing") %>% 
+  mutate(Gender = fct_drop(Gender))
+
+Clean_missing <- clean1 %>% 
+  bind_rows(Not_counted) %>% 
+  arrange(Year, Gender, States, Job_status) %>% 
+  mutate(Job_status = fct_explicit_na(Job_status, "Child/Elderly")) %>% 
+  mutate_at(c('Hours', 'Earnings_hr','Earnings_week' ), ~replace_na(.,0)) %>% 
+  dplyr::group_by(Year, Gender, States) %>% 
+  fill(Population, Unemployment_rate, Participation_rate, Employment_rate, .direction = "downup") %>% 
+  dplyr::mutate(sub_total = sum(Worker_status_numbers)) %>% 
+  mutate(Proportion_by_emp_status = Worker_status_numbers/sub_total) %>% 
+  ungroup() %>% 
+  select(- sub_total) %>% 
+  tidyselect:::rename("Employment_status_numbers" = "Worker_status_numbers") %>% 
+  mutate(Age = fct_explicit_na(Age, "Child/Elderly")) %>%
+  mutate(Workers_by_age = coalesce(Workers_by_age,Employment_status_numbers)) %>%
+  group_by(Year, Gender, States, Employment_status) %>%
+  dplyr::mutate(sub_total = sum(Workers_by_age)) %>% 
+  mutate(Proportion_by_age_range = Workers_by_age/sub_total) %>% 
+  select(- sub_total) %>% 
+  ungroup()
+ 
+names(which(colSums(is.na(Clean_missing))>0))
+
+
+```
+
+
+##	Step 6: Scan numeric variables for outliers
+
+The variables inspected for outliers include:
+
+* Workers by Age
+* Employment status numbers
+* Hours
+* Earnings per hour
+
+
+For each, we will examine the circumstances related to the variable and choose the right steps to follow.  There are 3 primary ways to identify Outliers: Box plots, z-score for normally distributed variables and Multivariate analysis.
+
+Due to the complexity of my data based on a variety of States with varying populations and worker numbers, box plots with facet wraps were my best hope of determining if I had outliers.  I did conduct a multi-variate analysis on two factors but, again due to the complexity and variability of the data, this analysis suggested I remove large portions of the data set which would not be accurate.
+
+***Workers by age and employment status***
+
+At first blush, it looks like there are lots of outliers in the Workers by age numeric variable but we have a lot of variation in the data from 0's in the 65 and over age rage for those with Job status of Not employed and Employment status of Unemployed.  Using a box plot, you can see the magnitude of outliers related to Non-workers and Unemployed regardless of state  
+
+
+```{r ,  echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = Clean_missing, aes(x = Employment_status, y = Workers_by_age)) + geom_boxplot(aes(fill=Employment_status))+ 
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Initial outliers of workers by age, employment status and State",  x = "Employment status", y = "Number of workers by age")+
+  theme(legend.position="bottom")  +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())+
+  facet_wrap(~States, scales = "free")
+```
+
+The decision was made to review the date based on removing Unemployed people.
+
+Through a series of box plots we cycle down to see if there are any outliers by age groupings
+
+```{r ,  echo=FALSE, message=FALSE, warning=FALSE}
+outlier_non_woker <- Clean_missing %>% 
+  filter(Job_status =="Employed")
+
+
+ggplot(data = outlier_non_woker, aes(x = Age, y = Workers_by_age)) + geom_boxplot(aes(fill=Age))+ 
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Employed by Age grouping and State",  x = "Age range", y = "Number of workers by age")+
+  theme(legend.position="bottom")  +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())+
+  facet_wrap(~States, scales = "free")
+  
+
+```
+
+**Employment status numbers**
+
+No outliers were uncovered or removed
+```{r ,echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(data = Clean_missing, aes(x = Employment_status, y = Employment_status_numbers)) + geom_boxplot(aes(fill=Employment_status))+ 
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Ouliers by employment numbers, employment status and State",  x = "Employment status", y = "Number of workers")+
+  theme(legend.position="bottom")  +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())+
+  facet_wrap(~States, scales = "free")
+
+outlier_unemployed <- Clean_missing %>% 
+  filter(Job_status =="Employed")
+
+
+ggplot(data = outlier_unemployed, aes(x = Age, y = Employment_status_numbers)) + geom_boxplot(aes(fill=Age))+ 
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Employed employment numbers by Age Range and  State",  x = "Age range", y = "Employment status numbers")+
+  theme(legend.position="bottom")  +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())+
+  facet_wrap(~States, scales = "free")
+
+```
+
+
+***Hours***
+
+In general, it is expected to use the whole data set to look for outliers. This report, however, contains two distinct Job status: Employed and unemployed persons.  
+
+If unemployed persons with 0 hours worked remained as part of the outlier analysis, it may be considered an outlier or force larger values to sit outside of the normal range.  The outlier analysis for Hours was done only after filtering the data for Employed persons to ensure the results are not skewed by Unemployed persons with 0 hours worked which represented half of the observations.
+
+No significant outliers were uncovered so none removed
+
+```{r  ,  echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+
+employed_hours <- Clean_missing %>% 
+  filter(Job_status == "Employed")
+
+ggplot(data = employed_hours, aes(x = Employment_status, y = Hours)) + geom_boxplot(aes(fill=Employment_status))+ 
+  # scale_y_continuous(labels = ~ format(.y, scientific = FALSE))+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Ouliers for Hours",  x = "Employment Status", y = "Hours worked")+
+  theme(legend.position="bottom")  +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())+
+  theme(aspect.ratio = 1)+
+  facet_wrap(~States, scales = "free")
+
+
+```
+
+**Earnings per hour***
+
+No outliers were uncovered or removed
+
+```{r , echo=FALSE, message=FALSE, warning=FALSE }
+employed_earnings_hr <- Clean_missing %>% 
+  filter(Job_status == "Employed")
+
+ggplot(data = employed_earnings_hr, aes(x = Employment_status, y = Earnings_hr)) + geom_boxplot(aes(fill=Employment_status))+ 
+  # scale_y_continuous(labels = ~ format(.y, scientific = FALSE))+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Ouliers for Earnings per hour",  x = "Employment Status", y = "EArnings per hour")+
+  theme(legend.position="bottom")  +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())+
+  theme(aspect.ratio = 1)+
+  facet_wrap(~States, scales = "free")
+```
+
+
+I also looked at Multi-variate analysis to identify outliers but the results when done as a whole indicated more than half my data should have been considered an outlier. Given the complex nature of the data and the wide variation between states and employment status (full-time and part-time), I did not pursue this further.
+
+
+##	Transform 
+
+For this project I tried two different data transformations: the Box-Cox transformation that was used in Assignment 2 for skewed data sets and the min-max normalisation for some numeric variables with widely different scales: Employment numbers and Earnings per hour.  
+
+### Box-Cox transformation
+
+The Box-Cox transformation is the best method for transforming a non-normal data distribution into more normally distributed data.  This transformation will better allow the use of data comparisons with other normally distributed data.
+
+The steps to run this transformation include:
+
+* Calling the variable to be transformed - the Employment numbers - and setting lambda to "auto"
+* Calculating lamba
+* Displaying the histograms of the original Employment numbers and the histogram after transformation
+
+
+In the end, the Box_Cox transformation using the lambda parameter provided the best result transforming a non-normal data distribution into more normally distributed data. 
+```{r transform1, fig.asp= .3, fig.width=10, fig.height=2, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+boxcox_numbers <- BoxCox(Clean_missing$Employment_status_numbers, lambda = "auto")
+
+lambda <- attr(boxcox_numbers, which = "lambda")
+```
+
+
+```{r transform2, fig.asp= .3, fig.width=10, fig.height=2, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(Clean_missing, aes(x=Employment_status_numbers))+
+  geom_histogram(bins = 30, fill = "cornflower blue", 
+               colour = "dark blue") + 
+  labs(title = " Histogram of Employment numbers - no transformation", x = "Employment numbers", y = "Frequency")
+ggplot(boxcox_numbers %>% as.data.frame()) +
+geom_histogram(aes(x = .), bins = 30, fill = "cornflower blue", 
+               colour = "dark blue") + 
+  labs(title = "Histogram of transformed Employment numbers using a Box-Cox Transformation", subtitle = bquote(~ lambda == .(lambda)), x = "Transformed Employment numbers", y = "Frequency")
+
+```
+
+### Min-max normalisation
+
+This normalisation technique is not intended to create the same transformation as the Box-Cox transformation.  However, if data is to be used in machine learning applications, the Min-max normalisation will change the scale of numeric variables to between 0 and 1.  By re-scaling all numeric variables to the same scale, they can be used more effectively in cluster analysis or other machine learning techniques.
+
+I chose the same Employment status numbers as above which range from 9,966 employees per group to 1,798,644 employees and normalised it against the Earnings per hour rates which range from 21.67 to 50.26. By using the Min-max normalisation, the shape and linear regression slope do not change but the scales of the two outcomes are both normalised between 0 and 1.
+
+The steps I took include:
+
+* Set the min_max_norm function
+* Filtering the data to include only "Employed" Job status observations thus eliminating 0 values which could skew the outcome.
+* Selected only the Employment status numbers variable
+* Normalised it using the min_max_norm function
+
+I also normalised the Earnings per hour variable using the same steps. 
+
+The histogram comparison shows a similar distribution of the Employment numbers and the dot plot shows the new distribution with both the Employee numbers and Earnings per hour normalised between 0-1 which is the same shape, look and regression line as before they were normalised.
+
+```{r transform3, fig.width=10, fig.height=2,fig.fullwidth=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+min_max_norm <- function(x) {
+  (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE)) 
+  
+}
+
+normalised_population <- Clean_missing %>% 
+  filter(Job_status == "Employed") %>% 
+  select(Employment_status_numbers)
+
+normalised_numbers <- min_max_norm(normalised_population)
+```
+
+
+```{r transform4, fig.width=10, fig.height=2,fig.fullwidth=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+par(mfrow = c(2,1))
+hist(normalised_population$Employment_status_numbers, breaks = 30, main= "Histogram of Employee population frequency", xlab = "Employment numbers", col = "cornflower blue")
+hist(normalised_numbers$Employment_status_numbers, breaks = 30, main= "Histogram of normalised Employee population frequency", xlab = "Employment numbers", col = "cornflower blue")
+par(mfrow = c(1,1))
+
+```
+
+```{r, fig.width=10, fig.height=2,fig.fullwidth=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+normalised_earnings_hr <- Clean_missing %>% 
+  filter(Job_status == "Employed") %>% 
+  select(Earnings_hr)
+
+normalised_hr <- min_max_norm(normalised_earnings_hr)
+
+
+```
+
+
+```{r, fig.asp = .3, fig.width=10, fig.height=2,fig.fullwidth=TRUE, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+scaled <- cbind(normalised_numbers,normalised_hr)
+```
+
+This graph shows the normalised Employment numbers and earnings per hour data in a dot plot.  While the visual is the same as before the values were normalised, it allows you to see the relationship between the two with the values all between 0-1.
+```{r, fig.asp = .3, fig.width=10, fig.height=2,fig.fullwidth=TRUE, echo=FALSE, message=FALSE, warning=FALSE}
+
+ggplot(data = scaled, aes(x = Employment_status_numbers, y = Earnings_hr)) + geom_point(stat = "identity")+
+  geom_smooth(method = "lm")+
+  scale_y_continuous(labels = scales::comma)+
+  scale_x_continuous(labels = scales::comma)+
+   labs(title = "Normalised Population and Earnings per hour",  x = "Employment numbers", y = "Earnings per hour")+
+  theme(legend.position="bottom") 
+
+
+```
+
+
+## Reflective journal
+
+This was a challenging assignment which has given me skills to take my coding to the next level.  
+
+The initial assignment plan takes employment data from the ABS and other websites to look at employment from an number of perspectives including types of work, hours of work, earnings and employee age ranges over an number of years and by gender and state. I found the initial downloading and preparing the data from it's raw form into a tidy data frame very challenging at first but, like a puzzle, I had to plan the order of operations very carefully to ensure I retained the data integrity especially when filtering out the rows, columns and sections I did not need for my analysis.
+
+My proudest moment was when the aggregated data sets matched data from another source within a small error range. While not significant to the data process, it was independent confirmation of the accuracy of the coding from step 1 to that point.  Other highlights of challenges that I had to overcome included:
+
+* the ability to create proportions of sub-sets within a data set. I researched and tried 7-8 different coding examples and various formats over 4-5 hours but once I got it to work, I was able to re-use it again in a couple of other contexts. 
+* using reference tables both from xlxs downloads and scraped for a website to manage and re-code SA4 regions and state names rather than hard-coding names or re-naming a data point.
+* Finding one line of code to allow me to aggregate 5 columns all at once: two columns to be aggregated by sum and three columns to be aggregated by mean. 
+* Learning the valuable lesson of ungrouping my groups after I have used them. On more than one occasion, I could not understand my I could not remove a column and it was because it was still grouped in a prior action.
+* And while I still do not understand the rules of naming a package as part of the code, I got used to trying dplyr:: or tidyverse:: in front of a number of lines of code to get them to work.  I assume it is due to similar actions in different packages but I have more to learn.
+
+Thank you for providing this experience and challenge.
+
+
+
+
+## References
+
+Australian Bureau of Statistics 2016, ‘Details - Overview’, Australian Bureau of Statistics, viewed 18 August 2022, <https://www.abs.gov.au/AUSSTATS/abs@.nsf/DetailsPage/1270.0.55.001July%202016?OpenDocument>.
+
+Australian Bureau of Statistics 2021, ‘Characteristics of Employment, Australia, August 2021 | Australian Bureau of Statistics’, viewed 9 August 2022, <https://www.abs.gov.au/statistics/labour/earnings-and-working-conditions/characteristics-employment-australia/latest-release>.
+
+Australian Bureau of Statistics 2022a, ‘Allocation files | Australian Bureau of Statistics’, viewed 18 August 2022, <https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs-edition-3/jul2021-jun2026/access-and-downloads/allocation-files>.
+
+Australian Bureau of Statistics 2022b, ‘Labour Force, Australia, Detailed, June 2022 | Australian Bureau of Statistics’, viewed 9 August 2022, <https://www.abs.gov.au/statistics/labour/employment-and-unemployment/labour-force-australia-detailed/latest-release>.
+
+Australian Bureau of Statistics 2022c, ‘National, state and territory population, December 2021 | Australian Bureau of Statistics’, viewed 9 August 2022, <https://www.abs.gov.au/statistics/people/population/national-state-and-territory-population/latest-release>.
+
+Australian Government ‘All Regions (ABS SA4) downloads | Labour Market Insights’, Labour Market Insights, viewed 10 August 2022, <https://labourmarketinsights.gov.au/regions/data-downloads/all-regions-abs-sa4-downloads/>.
+
+Biographical Database of Australia ‘Abbreviations : States, Provinces, Counties’, Biographical Database of Australia, viewed 17 August 2022, <https://www.bda-online.org.au/help/bda-conventions/abbreviations-states/>.
+
+
+
+## Presentation link
+
+https://www.loom.com/share/20b5f4b5286345158705e57fc6c53763
+
+Apologies, I could not get my camera to work and the circle that would have shown my face was covering my slides so the best outcome in the end.
+
+## Appendix: All code for this report
+
+```{r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+
+```
+
+
+### Step 1: Head of Data sets for all original data frames.
+
+```{r heads, echo=TRUE, message=FALSE, warning=FALSE }
+
+head(participation_df, n=3)
+
+head(workers_df, n=3)
+
+head(population_df, n=3)
+
+head(earnings_df, n=3)
+
+head(pop_df2, n=3)
+
+head(SA4_ref, n=3)
+
+head(SA4_mapping_df, n=3)
+
+head(state_table_df, n=3)
+
+
+```
+
+### Step 2: Summaries of Tidied data sets
+
+**Summary of Data frame 1: Population**
+
+```{r}
+
+summary(population)
+```
+
+**Summary of Data frame 2: Hourly rates**
+```{r}
+summary(Earnings)
+```
+
+**Summary of Data frame 3: Employment type and Hours of work ranges**
+```{r}
+summary(Worker2)
+```
+
+**Summary of Data frame 4 - Part A: Employees by age range  **
+```{r}
+summary(Population_by_age)
+```
+
+**Summary of Data frame 4 - Part B: Employees by employment status  **
+```{r}
+summary(Population_by_status)
+```
+
+**Summary of Data frame 5: Employment participation rates  **
+```{r}
+summary(Participation)
+```
+
+**Summary of merged Employment table**
+
+```{r}
+ summary(Employment_final)
+```
+
+**Summary of table after cleaning for missing items**
+
+```{r}
+summary(Clean_missing)
+```
+
+
+### Step 2: Cleaning of reference table data sets.
+
+
+**Reference table 1: Statistical Area 4** 
+
+The steps taken to clean this data set include:
+
+* Renaming variable labels, selecting only the two variables required (the SA4 region code and States)
+* The region code was mutated to an integer and the States were mutated into factors with levels
+
+There were NA values related to other Australian areas outside of the primary 8 States and Territories. Decision to remove them from the reference list and check again to ensure no NA's remaining.
+
+**Reference table 2: SA4 mapping of 2011 to 2016 SA4 Codes**
+
+* Select just the columns with SA4 codes from 2011 and 2016 removing NA's
+* Renamed the columns and changed the class for both columns to integer
+
+**Reference table 3: State abbreviation table**
+
+* Rename the columns
+* Filter the country code to include just "AUS" 
+* Remove the country code so the final data has just the state abbreviation and state name
+
+
+**Data Definitions**
+
+Employment Rate: the proportion of working-age population (15-65) who are employed.
+Participation rate: the proportion of working-age population (15-65 years of age) who are in the labour market, employed or looking for work.
+Unemployment rate: the proportion of working-age population (15-65) who are not employed but actively seeking work, and currently available for work.
+<br>
+<br>
