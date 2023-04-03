@@ -1,0 +1,975 @@
+---
+title: "Data Wrangling Assessment Task 2: Creating and pre-processing synthetic data"
+author: "Audrey Ciccone s3932014"
+subtitle: "Tim Horton's Donuts - Canada"
+output: 
+  word_document: default
+  html_document:
+    df_print: paged
+  html_notebook: default
+---
+
+# Introduction 
+
+There are few brand names in Canada more iconic than Tim Hortons.  Started by a hockey player in the province of Ontario in 1964, this brand is now popular across Canada and has grown to include a wide number of products.  However, it is most well known for its coffee and donuts.
+
+In addition to larger take-away restaurants, many small coffee and donut kiosks can be found in grocery stores, airports, and in small venues in high traffic commercial centres.  
+
+![Typical Tim Hortons coffee and donut kiosk](Tim_Hortons_-_Edmonton_City_Centre.JPG) 
+
+(Wikimedia Commons 2007)
+
+This assignment creates synthetic data typical of items sold in a Tim Hortons kiosk over a chosen 3 day period and includes 3 primary data sets:
+
+* A Customer list
+* A Product list
+* A Transaction fact table to join the data in a meaningful way
+
+The data also includes a few uniquely Canadian references along the way to add to the charm and 'realness' of this synthetic data.
+
+
+## Library setup 
+
+The following packages have been loaded into the RMarkdown file to enable the code execution.  Specifically:
+
+* tidyr, dplyr, magrittr and plyr to enable most other tidy data functions
+* randomNames and generator to generate synthetic data
+* lubridate to assist in cleaning the date format
+* rvest is used to enable the read_html functionality
+* outliers and stats to assist with cleaning missing values and outliers
+* readr to output my data files to csv
+* ggplot2 for data visualisations along with a preferred visualisation theme
+* Forecast for Box-Cox transformation
+```{r packages, echo=TRUE, message=FALSE, warning=FALSE}
+
+library(dplyr)
+library(tidyr)
+library(plyr)
+library(magrittr)
+library(randomNames)
+library(generator)
+library(lubridate)
+library(rvest)
+library(outliers)
+library(stats)
+library(readr)
+library(ggplot2)
+theme_set(
+  theme_classic() +
+    theme(legend.position = "right")
+)
+library(forecast)
+```
+
+## Data Description 
+
+I am creating 3 main dataframes
+
+* Customer detail
+* Product detail
+* Transaction fact table
+
+Later in the assignment, I will use these 3 tables to create two merge tables: a Purchases table showing purchases by customer and a Sales table focused on revenue to the business
+
+
+## Step 1 - Generate the data
+
+
+### Table 1 - Customer list
+
+The customer data table contains all data related to customers which you might find in a customer list.
+
+There are 11 variables in this list and 2000 rows.  As I step through them, I will also include any important steps in generating this synthetic data.
+
+However, to ensure replicability and automation of the data, there are a few variables to set early in the process which include:
+
+* SEED: by setting a seed value of 2161 in the first part of my data, I can use set.seed(SEED) in many chunks and it will refer back to that same value if we are running chucks on their own.  Placing it in the first chuck after the library is the safest place as you really can't run other chucks without starting here
+* Cust_id: sets the total number of customers to be synthetically created - 2000
+* Min_age: is the minimum age of customers
+* Max_age: is the maximum age
+* Mean_age: is the mean of the age range between 16 and 80 - so about 48 years. You have to add the minimum age back to equation of (max_age - min_age/2) to boost the bottom end of the range or it would alternately calculate the mean_age as 32 (64 years difference divided by 2).
+* sd_age: This source (Stackexchange 2017) suggested using mean divided by 3 to simulate 3 standard deviations from the mean.  The interval between 16 and 80 years is 64 years with a mean of 32 year.  Divided by 3, the standard deviation about 10 years.
+* Cities: I have also generated a vector of cities to use in the synthetic data.
+
+```{r variables, echo=TRUE, message=FALSE, warning=FALSE}
+SEED <- 2161
+set.seed(SEED)
+
+cust_id <- 1:2000
+n_cust <- 2000
+min_age <- 16
+max_age <- 80
+mean_age <- ((max_age - min_age)/2)+min_age
+sd_age <- (((max_age-min_age)/2)/3)
+
+cities <- c('Vancouver', 'Burnaby', "Surrey", 'Coquitlam', 'Langley', 'New Westminster', 'Cloverdale', 'Ladner', 'Richmond', 'West Vancouver', 'Delta', 'White Rock')
+```
+To begin the synthetic data, I generated random names and gender for my 2000 customer.  To remain proportional, I generated 1000 female names and assigned them the correct gender and duplicated this for male names and gender. This provides a 50/50% gender split.
+
+```{r names, echo=TRUE, message=FALSE, warning=FALSE}
+female_names <- data.frame(First_name = randomNames((n_cust/2), gender = 1, which.names = "first"),
+                          Last_name = randomNames((n_cust/2), which.names = "last"),
+                           Gender = as.factor("Female"))
+
+male_names <- data.frame(First_name = randomNames((n_cust/2), gender = 0, which.names = "first"),
+                         Last_name = randomNames((n_cust/2), which.names = "last"),
+                           Gender = as.factor("Male"))
+```
+
+While above we created our customer names and gender, it is currently two lists so we need to do two things:
+
+* Bind them together into one table
+* Scramble the data using 'sample_n' to randomise their order before adding additional variables.
+
+The additional variables we are going to add include:
+
+* A unique Customer ID
+* Age based on a normalised distribution around a mean age of `r mean_age` which is half way between the minimum age of `r min_age` and the maximum age we have set to be `r max_age`. It has also been rounded into a whole number.
+* City as a uniform sample from the cities vector created above.
+* Province and Country have been set to one factor each.
+* Phone as a sample phone number generated in a North American format using the generator package and no repetition.
+* Loyalty card set as a 2 factor sample with a probability distribution of 60% "Yes" of our customers being a loyalty member and 40% "No"
+
+Age is the only numeric variable at this time.
+
+Gender, City, Province, Country and Loyalty_card are set to factors as these variables were mutated to simplify my sets later on. None of these factors require a specific level or order.
+
+Customer_id is an integer.
+
+First_name, Last_name and Phone were set to character strings as they are not something one would want to sort or manipulate as a factor, nor is phone a numeric variable you would use in a mathematical equation.
+
+The charts following the code show the Age normal distribution using a Histogram, QQ plot and have also done a Shapiro-Wilk test showing a p-value of 0.12. As it is above a p-value of 0.05, we have to reject the null hypothesis that the data has some variation so it is not fully normal - but it's close so we operate under the assumption of normality.
+
+```{r customer, echo=TRUE, message=FALSE, warning=FALSE}
+Customer_list <- rbind(female_names, male_names) %>% 
+  sample_n(n_cust, replace = TRUE) %>% #to randomise them
+  mutate(Customer_id = sample(1:n_cust,n_cust,replace = FALSE)) %>% 
+  relocate(Customer_id, .before = First_name) %>% 
+  mutate(Age = round(rnorm(n_cust, mean = mean_age, sd = sd_age))) %>% 
+  mutate(City = as.factor(sample(cities,n_cust,replace = TRUE))) %>% 
+  mutate(Province = as.factor(c("BC"))) %>%
+  mutate(Country = as.factor(c("Canada"))) %>% 
+  mutate(Phone = r_phone_numbers(n_cust, use_parentheses = TRUE, use_spaces = TRUE)) %>% 
+  mutate(Loyalty_card = as.factor(sample(c("Yes", "No"),n_cust,replace = TRUE, prob=c(.60,.40))))
+
+hist(Customer_list$Age, breaks=20, main = "Chart 1: Histogram of synthetic Age normal distribution", xlab = "Age" , ylab = "Frequency", col = "cornflower blue")
+qqnorm(Customer_list$Age, main = "Chart 2: Q-Q plot of synthetic Age normal distribution")
+qqline(Customer_list$Age, col = "red",lwd=1, lty=2)
+
+shapiro.test(Customer_list$Age)
+```
+
+**Correlated random variable**
+
+Member_yrs is a correlated random variable to approximate the years a Loyalty card holder would be a member.  It is calculated from the customer age with the assumption that older customers would have been a member longer than younger customers so there is a positive correlation between the numbers.  The only variation on this was to set the calculation for those with No Loyalty card to 0 rather than using NA.  The main reason is that in our webinars it was suggested there should be no good reason to leave values as NA.
+
+The approach to this calculation was to create a correlated distribution to the normalised age distribution created by the frequency of age counts. I then applied the mean_error and approximated standard deviation of the error to incorporate into the calculation. 
+
+As I wanted the number of years associated with membership to be much smaller than the customer's age, I used some additional mathematical calculations such as taking the square-root of Age, dividing the standard error by 4, and rounding the overall membership years to create clusters of years rather than a straight line correlation.
+
+The last step was to generate the new variable 'Member_yrs' to add it to the Customer_list dataframe. This variable has a numeric value as it has taken on the class and type of Age.
+
+```{r correlated1, echo=TRUE, message=FALSE, warning=FALSE}
+Correl <- count(Customer_list,'Age')
+
+mean_error <- mean(Correl$freq)
+n_error <- length(Correl$freq)
+sd_error <- mean_error/3 
+
+
+Customer_list <-  Customer_list %>% 
+  mutate(Member_yrs = if_else(Loyalty_card == "Yes", round(sqrt(Age)+sd_error/4), 0))
+```
+
+The following plot will give you a visual of the correlation.  
+```{r correlated2, echo=TRUE, message=FALSE, warning=FALSE}
+Correlated <- Customer_list %>%
+  select(Age, Loyalty_card, Member_yrs) %>%
+  filter(Loyalty_card != "No") %>%
+  ggplot(aes(x=Age, y = Member_yrs))+
+  geom_point()+
+  scale_x_continuous(breaks=seq(0,100,10))+
+  labs(title= "Chart 3: Correlated random data - Age and Member_yrs ", x="Age range", y="Loyalty card membership displayed in years")
+
+Correlated
+```
+
+For this assignment, I have been setting the Class and Type of variables as I go. They are set as follows for the Customer list.
+
+```{r,echo=TRUE, message=FALSE, warning=FALSE}
+sapply(Customer_list,class)
+sapply(Customer_list,typeof)
+```
+
+
+**Introduce missing values and outliers in Age**
+
+The Customer list has two numerical value in which we need to add outliers:
+
+* Age
+* Member_yrs
+
+We will also introduce  some random missing values.
+```{r missing1, echo=TRUE, message=FALSE, warning=FALSE}
+cust_missing_row = 7
+cust_row_index = sample(1:n_cust, cust_missing_row)
+
+Customer_list[cust_row_index, "Age"] <- NA
+
+n_outliers = 2
+cust_outlier_row = sample(1:n_cust, n_outliers)
+Customer_list[cust_outlier_row, "Age"] <- c(strtoi("-10"), strtoi("100"))
+
+Customer_list[cust_outlier_row, "Member_yrs"] <- c(strtoi("-5"), strtoi("30"))
+```
+
+This summary will provide an overview of the data and variables.
+
+On review, most of the variables look as expected in number and variability. The only variations of note are:
+
+* Age shows both outliers and NA's
+* Loyalty_card is not a 50/50 split of Yes and No but accurately reflects the proportions used in generating the data.
+* Member_yrs shows outliers as both negative numbers and a high max value, similar to Age.
+```{r missing2, echo=TRUE, message=FALSE, warning=FALSE}
+summary(Customer_list)
+
+write_csv(Customer_list, path = "Customer list with missing values and outliers.csv")
+```
+
+### Table 2 - Product ist
+
+The Product data table contains all data related to products sold in a Tim Hortons kiosk. 
+
+There are 7 variables in this list and 76 products.  As I step through them, I will also include any important steps in generating this synthetic data.
+
+The first section of data is to set our menu - the vectors containing our exact products.  Each vector is named according to a product category. They are created as vectors of strings which will be mutated into factors as they are brought together in our Product_list.  They include:
+
+* Coffee: Different types of standard drip coffee and tea found in North America. Unique to Tim Hortons is their famous **Double Double Coffee** which means a drip coffee with 2 cream and 2 sugar included by the server.
+* Special coffee: These are the barrista style coffees and hot drinks we are more familiar with in Australia.
+* Cold drinks: blended cold drinks made with ice.  These are also a specialty type of beverage and have a premium price.
+* Donuts: Famous for their donuts, Tim Hortons carries a wide variety of donuts and cookies.
+* Timbits: a Timbit might be referred to in other countries as a 'donut hole'.  These by-products of the donut making process are extremely popular and are sold in 3 different sizes with the small pack containing 10 Timbits, medium with 20 Timbits and large with 40 timbits.  They are favoured by families with children or for those wanting to provide a treat to groups without needing to buy trays of traditional donuts.
+
+Additionally, we set the primary size options for the majority of menu items with a vector of Small, Medium and Large.
+
+
+```{r products, echo=TRUE, message=FALSE, warning=FALSE}
+set.seed(SEED)
+
+coffee <- c('Original Blend Coffee', 'DarkRoast Coffee','Decaf Coffee','Steeped Tea', 'Double Double Coffee')
+
+special_coffee <- c('Cappuccino', 'Latte', 'Hot Chocolate','London Fog', 'Coffee Mocha' )
+
+cold_drinks <- c('Iced Capp Supreme', 'Vanilla Cream Cold Brew', 'Chocolate Creamy Chill', 'Iced Latte', 'Frozen Hot Chocolate', 'Frozen Lemonade')
+
+donuts <- c('Apple Fritter', 'Blueberry', 'Boston Cream','Canadian Maple', 'Chocolate Dip', 'Chocolate Glazed', 'Chocolate Toasted Coconut','Chocolate Marble', 'Double Chocolate','Honey Cruller', 'Honey Dip', 'Long John', 'Maple Dip', 'Maple Cruller', 'Maple Eclair', 'Old Fashioned Sugar', 'Old Fashioned Glazed','Old Fashioned Plain', 'Raspberry Filled', 'Sour Cream Glazed', 'Strawberry Dip', 'Strawberry Filled',  'Toasted Coconut', 'Chocolate Chunk Cookie', 'Peanut Butter Cookie')
+
+size_options <- c("Small", "Medium", "Large")
+```
+Each menu category is generated as a separate data frame containing:
+
+* Category: the category name is set as a factor and repeats in each row as the items and sizes are added.
+* Item: most items are put in the data.frame as a repetition of 3 in order to assign the 3 size_options. Items are set to class-factor.
+* Size: the size option vector is repeated for each item in the category in the same order. This is also a factor
+* Price: specific size related prices are added as numeric variables to each item to mirror the size from smallest to largest and cheapest to most expensive for each item.
+
+Different from the Customer_list, the Product_list is set out with little randomisation of the data.  The precision in this data set is key to creating realistic synthetic data.
+
+
+```{r products2, echo=TRUE, message=FALSE, warning=FALSE}
+coffee_menu <-  data.frame(Category = as.factor("Coffee"),
+                           Item = as.factor(rep(coffee, each=3)),
+                              Size = as.factor(rep(size_options, length(coffee))),    
+                           Price = rep(c(1.59,1.79,1.99), length(coffee)))
+
+                             
+special_coffee_menu <- data.frame(Category = as.factor("Special Coffee"),
+                                  Item = as.factor(rep(special_coffee, each=3)),
+                              Size = as.factor(rep(size_options,length(special_coffee))),                               Price = rep(c(2.49,2.99,3.49), length(special_coffee)))
+
+
+cold_drinks_menu <- data.frame(Category = as.factor("Cold Drinks"),
+                               Item = as.factor(rep(cold_drinks, each=3)),
+                              Size = as.factor(rep(size_options, length(cold_drinks))),                               Price = rep(c(2.49,2.99,3.49), length(cold_drinks)))
+
+
+donuts_menu <- data.frame(Category = as.factor("Donuts"),
+                          Item = as.factor(donuts),
+                              Size = as.factor(rep(c('One size'), length(donuts))),
+                          Price = rep(0.99, length(donuts)))
+
+
+timbit_menu <- data.frame(Category = as.factor("Timbits"),
+                          Item = as.factor(rep("Timbits pack", each=3)),
+                              Size = as.factor(size_options),
+                          Price = c(1.99,3.99,7.99))
+```
+
+The product category menus are then appended to the Product_list using rbind to bind the data and group multiple rows together.  
+
+I have also added an overall factor of menu type to distinguish Drinks and Donuts which will be helpful in later analysis.
+
+The final variable I wanted to add was a purposely skewed distribution of Popularity of the menu items.  If they are going to be on the menu, the assumption is that most are well liked so the distribution is skewed left with the greatest frequency of variables on the right.
+
+To do this, I took a number of steps:
+
+1. I created a distribution of 1000 numbers between 0 and 1 using the Beta random number generating function using shape parameters and assigned them to a vector called 'popularity'.
+2. I took a random sample of the popularity vector with replacement by the number of products I have (length(Product_id))
+3. Lastly I multiplied the popularity sample number, multiplied it by 5 and rounded it to give me numbers from 1 to 5.
+
+The barplot following the code will provide a view of the Popularity distribution.
+
+The last part of code in this section applies:
+
+* levels to create a specific order in which the menu Category factors would be viewed in a visual
+* levels to create a specific order for the Size factors as well.
+
+
+```{r products3, echo=TRUE, message=FALSE, warning=FALSE}
+popularity <-  c(rbeta(1000,5,2))
+
+Product_list <- rbind(coffee_menu,special_coffee_menu, cold_drinks_menu, donuts_menu, timbit_menu) %>% 
+  mutate(Product_id = c(1:length(Item))) %>% 
+  relocate(Product_id, .before = Category) %>% 
+  mutate(Menu_type = as.factor(case_when(Category == "Donuts" ~ "Donuts",
+                               Category == "Timbits" ~ "Donuts", 
+                               TRUE ~ "Drinks"))) %>% 
+  relocate(Menu_type, .before = Category) %>% 
+  mutate(Pop_dist = sample(popularity,length(Product_id), replace = TRUE))%>%
+  mutate(Popularity = as.factor(round(Pop_dist*5))) %>% 
+  select(-Pop_dist)
+
+Product_list$Category <- factor(Product_list$Category, levels = c("Donuts", "Timbits", "Coffee", "Special Coffee", "Cold Drinks"))
+Product_list$Size <- factor(Product_list$Size, levels = c("Small", "Medium", "Large", "One size"))
+
+pop_freq = table(Product_list$Popularity)
+
+bp <- barplot(pop_freq[pop_freq>=1], main= "Chart 4: Bar plot of Product popularity frequency", xlab = "Popularity rating" , ylab = "Frequency", col = "cornflower blue")
+
+```
+
+For this assignment, I have been setting the Class and Type of variables as I go. They are set as follows for the Product list
+
+```{r ,echo=TRUE, message=FALSE, warning=FALSE}
+sapply(Product_list,class)
+sapply(Product_list,typeof)
+```
+
+
+The Product list has one numerical value of Price which we need to add outliers and missing values.
+
+
+```{r productsmissing, echo=TRUE, message=FALSE, warning=FALSE}
+set.seed(SEED)
+
+prod_missing_row = 5
+prod_row_index1 = sample(1:length(Product_list$Item), prod_missing_row)
+
+Product_list[prod_row_index1, "Price"] <- NA
+
+p_outliers = 2
+prod_outlier_row = sample(1:length(Product_list$Item), p_outliers)
+Product_list[prod_outlier_row, "Price"] <- c(strtoi("0"), strtoi("21"))
+```
+
+This summary provides an overview of the data and variables.
+
+Most of the variables look as expected in number (76 Product_ids) and variability. The only variations of note are:
+
+* Price shows both outliers and NA's
+* Popularity accurately reflects the proportions used in generating the data.
+
+```{r productsmissing2, echo=TRUE, message=FALSE, warning=FALSE}
+summary(Product_list)
+
+write_csv(Product_list, path = "Product list with missing values and outliers.csv")
+
+```
+
+
+### Table 3 - Transaction Fact table
+
+The Transaction fact table contains all data related to sales transactions. 
+
+There are 7 variables in this list and 3000 rows of data representing Product numbers sold.  As I step through them, I will also include any important steps in generating this synthetic data.
+
+* Dates: I chose 3 different dates to ensure there was sufficient opportunity for variability when assigning transactions per day. These are of class Date
+* Customer_id: This is an integer key to link the transaction data to a customer and their information. 
+* Product_id: This integer key links the transaction data to a product item on the Product_list.
+* Transaction_number: This integer key is used to join additional data in this table.  Unlike Product and Customer id's, the Transaction_number is unique and does not repeat over the Dates however these numbers can appear more than once if one customer bought more than one item.
+* Items_per_transaction: is a variable which counts the number of items purchased per customer per day.  As some customers could have purchases on more than one day, this numeric value was set while the Dates and Customer_id were grouped.
+* Salesperson (factor) and Location (factor) are added in the next sections.
+
+To ensure the best outcome for the synthetic data, I created a for loop based on the 3 dates and randomly sampled (uniform distribution) 1000 Customer_id and 1000 Product_id's per day.  As expected, this resulting in some Customer_id's being selected multiple times and other Customer_id's never being selected. When sorted by Customer_id, you can see some customers had 'purchased' single or multiple products.
+
+Once the loop was created for each day, the tables were bound into a single dataframe with rbind().
+
+The next step was group the data by Dates and Customer_id and assign a Transaction_number using the group_indices() function and to generate an Items_per_transaction count to assign to each row.  While it may seem like a repetition, it is necessary so that should the data later be merged and then subset, the transaction information about the Item_per_Transaction would follow. 
+
+Lastly, I arranged the data by Dates and Customer_id to ensure everything aligned and was accurate.
+
+```{r facttable, echo=TRUE, message=FALSE, warning=FALSE}
+set.seed(SEED)
+
+all_purchases = data.frame()
+Dates <- c("2022-06-29", "2022-06-30", "2022-07-01")
+
+for(i in Dates){
+p2 <- 1000
+Purchases2 <- data.frame(Dates = as.Date(rep(i, each = p2)),
+                        Customer_id = sample(cust_id,p2,replace = TRUE),
+                        Product_id = sample(Product_list$Product_id,p2, replace = TRUE))
+
+all_purchases <- rbind(all_purchases, Purchases2) 
+
+}
+
+Transactions_df <- all_purchases %>% 
+  group_by(Dates,Customer_id) %>% 
+  mutate(Transaction_number = group_indices(all_purchases, .dots = c("Dates","Customer_id"))) %>% 
+  relocate(Transaction_number, .before = Customer_id) %>%
+  mutate(Items_per_transaction = table(Transaction_number)[Transaction_number]) %>%
+  mutate(Items_per_transaction = as.numeric(as.character(Items_per_transaction))) %>%
+  ungroup() %>% 
+  arrange(Dates, Customer_id)
+
+
+```
+To complete the Transaction fact table, I wanted to add a Salesperson and Location to the table ensuring I don't have the Salesperson working at 2 different locations on the same day. This was done over a number of steps. 
+
+**Step 1:**
+To create Salespeople, I created a synthetic vector of salespeople using the names of great Canadians which has been scraped from Wikipedia [@Wikipedia 2022] and assigned a salesperson randomly to each transaction. At this stage I have created a new small table of Salesperson numbers from 1-10 and will attach these names later.
+
+```{r salesperson, echo=TRUE, message=FALSE, warning=FALSE}
+set.seed(SEED)
+
+sales_names <- read_html("https://en.wikipedia.org/wiki/The_Greatest_Canadian")
+
+length(html_nodes(sales_names, "table"))
+
+Sales_list<- html_table(html_nodes(sales_names, "table")[[2]]) %>% 
+  select(Name) 
+
+Sales_person <- unlist(Sales_list)
+employees <- 1:length(Sales_person)
+
+trans_total <- length(unique(Transactions_df$Transaction_number))
+
+salesperson <- Transactions_df %>% 
+  select(Transaction_number) %>% 
+  distinct() %>% 
+  mutate(Salesperson = sample(employees, trans_total, replace = TRUE))
+```
+**Step 2:** 
+Left join the Salesperson table to the Transaction table by Transaction number using a uniform sampling distribution.
+
+**Step3:** 
+Mutate the location column based on whether the Salesperson value was an even or odd number.  This also ensures that no sales person is working at two different locations on the same day.
+
+**Step 4:**
+Change location and Salesperson to factors and attach the Salesperson original Wikipedia names as labels. These two factors do not need to be ordered.
+
+```{r salesperson2, echo=TRUE, message=FALSE, warning=FALSE}
+set.seed(SEED)
+
+location <- c("Airport", "City Centre")
+
+Transactions <- Transactions_df %>% 
+   left_join(salesperson, by = "Transaction_number") %>% 
+relocate(Salesperson, .after = Transaction_number) %>% 
+    mutate(Location = if_else((Salesperson %%2) ==0,1,2)) %>% 
+ mutate(Location = factor(Location, labels = location)) %>% 
+mutate(Salesperson = factor(Salesperson,
+      levels = employees, labels = Sales_person)) %>% 
+    arrange(Dates, Customer_id)
+
+write_csv(Transactions, path = "Transaction fact table.csv")
+```
+For this assignment, I have been setting the Class and Type of variables as I go. They are set as follows for the Transactions fact table
+
+```{r ,echo=TRUE, message=FALSE, warning=FALSE}
+sapply(Transactions,class)
+sapply(Transactions,typeof)
+
+```
+
+There are a couple important things to note in the summary of the Transactions fact table.  
+
+* While there are 3000 Product_id's randomly sold, as some Customers purchased more than one item, the Transaction_numbers were assigned to the full Transaction so their are fewer Transaction numbers.
+* While we have 2000 customers, as the Customer_id's  were randomly assigned to for purchases there are not 2000 Customer_id's in the Transaction summary
+* Random assignment of Location has not resulted in a 50/50 split between the two locations. As the Location count in the summary is a count of rows out of 3000, this may also have been influenced by the multiple items per transaction as well.  
+
+```{r ,echo=TRUE, message=FALSE, warning=FALSE}
+summary(Transactions)
+```
+
+
+**A note on missing values and outliers** for the Transaction fact table numeric variable: Items_per_transaction
+
+I was unable to add any missing values or outliers in the Items per transaction numeric variable as it is a calculated variable based on a table count of another column.  By removing even one variable, it changes the dynamics of the code and results in a count of all rows (3000) vs the 1, 2, 3 or 4 items in the current variable.
+
+Unfortunately, as a beginner in R, trying to solve this is beyond my skill level so I am unable to do this requirement in the Transaction fact table.
+
+
+## Merge Tables - Customer and Product with Transaction Fact Table
+
+This Sales_table combines the Customer list, Product list and the Transactions fact table. This was done using left_joins.
+
+
+
+```{r Sales_table, echo=TRUE, message=FALSE, warning=FALSE}
+
+Sales_table <- Transactions %>% 
+  left_join(Customer_list, by = 'Customer_id') %>% 
+  left_join(Product_list, by = 'Product_id')
+
+write_csv(Sales_table, path = "Step 2 Merged Sales table.csv")
+```
+
+## Understand 
+
+Note that the data type conversions have already been done as the data was generated and the table contains a combined 23 variables and 3,000 rows of data for synthetic transactions taking place over 3 days.  
+
+To summarise, in prior sections of the assignment the following data conversions occured:
+
+* Generated
+    + 1 Date class variable
+    + 12 Factor class variable including 3 ordered variable and one which was labelled from a reference source
+    + 4 numeric variables
+    + 3 integer variables
+    + 3 character variables
+* Inspected the data variables at the end of generating each of the 3 base tables to ensure they were 
+    + of the right class and type, 
+    + contained no unknown missing values or outliers beyond those generated on purpose
+    + showed an appropriate uniform, normal or other proportionate distribution as designed.
+
+Further tidying of the dataframe will occur after the new variables have been mutated in Step 3.
+
+
+```{r something, echo=TRUE, message=FALSE, warning=FALSE}
+str(Sales_table)
+
+```
+
+##	Manipulate Data 
+
+In this step I want to generate a few additional variables related to Price and Product purchase levels.
+
+In this first step, we are adding 3 additional variables linked to price:
+
+* Net_cost: which is a proportion of the Price and varies by product Category as some Menu items have a higher or lower markup. It is generally the actual cost of the item.
+* Profit: the difference between Price and Net_cost.  This is the money Tim Hortons would make on each product sold.
+* Profit_margin: this calculated cost is show as a proportion of 1.  The closer to 1 the Profit_margin, the more money the company makes on selling those Products.
+
+To calculate these, we first set the markup levels for each category then mutate the 3 new variables.
+
+
+```{r manipulation, echo=TRUE, message=FALSE, warning=FALSE}
+markup_coffee <- 2.5
+markup_spec_coffee <- 3.0
+markup_drinks <- 3.0
+markup_donuts <- 3.5
+markup_timbits <- 5.0
+
+Sales_table2 <- Sales_table %>% 
+  mutate(Net_cost =
+           case_when(Category == "Coffee"~ round(Price/markup_coffee,3),
+                     Category == "Special Coffee"~ round(Price/markup_spec_coffee,3),
+                     Category == "Cold Drinks"~ round(Price/markup_drinks,3),
+                     Category == "Donuts"~ round(Price/markup_donuts,3),
+                     Category == "Timbits"~ round(Price/markup_timbits,3))) %>%
+  mutate(Profit = Price - Net_cost) %>%
+  mutate(Profit_margin = round(Profit/Price,3))
+```
+
+The second new variable I want to add is a Category rating.  
+
+During the initial development of the Product_list, I created a Popularity rating based on a skewed distribution to ensure more products were Popular and fewer were not as shown in Chart 4.  However, now that we have 'realistic' sales data, I would like to create a Category_rating based on the number of products actually sold across 2 Menu types: Drinks and Donuts.
+
+The following steps were taken first for the Drinks Menu_type and repeated for the Donuts. To calculate the Category_rating, I first generated the frequency distribution of the items, then calculated a cumulative summary assigning a proportion of 1 to each Product_id frequency.  Finally, I assigned a rating in 0.20 increments to assign ratings from 5 as the highest rating to 1 as the lowest.
+
+While the Popularity rating was purposely skewed towards higher ratings for effect, the more uniform distribution of Category_ratings with 20% each would help a compnay determine which items they sell less of when it comes time to review what products to keep and which can be switched out with new items they want to try.
+
+```{r manipulation2, echo=TRUE, message=FALSE, warning=FALSE}
+drinks <- Sales_table2 %>% 
+  select(Menu_type,Product_id) %>% 
+  filter(Menu_type == "Drinks")
+
+dist_drinks <- drinks %>% 
+  count('Product_id') %>% 
+  arrange(freq) %>% 
+  mutate(freq_dist = freq/sum(freq)) %>%
+  mutate(freq_cd = cumsum(freq_dist)) %>% 
+  mutate(Category_rating = case_when(freq_cd >= 0.80 ~ '5',
+                                     freq_cd >= 0.60 ~ '4',
+                                     freq_cd >= 0.40 ~ '3',
+                                     freq_cd >= 0.20 ~ '2',
+                                     freq_cd >= 0.00 ~ '1'))
+
+donuts <- Sales_table2 %>% 
+  select(Menu_type,Product_id) %>% 
+  filter(Menu_type == "Donuts")
+
+dist_donuts<- donuts %>% 
+  count('Product_id') %>% 
+  arrange(freq) %>% 
+  mutate(freq_dist = freq/sum(freq)) %>%
+  mutate(freq_cd = cumsum(freq_dist)) %>% 
+  mutate(Category_rating = case_when(freq_cd >= 0.80 ~ '5',
+                                     freq_cd >= 0.60 ~ '4',
+                                     freq_cd >= 0.40 ~ '3',
+                                     freq_cd >= 0.20 ~ '2',
+                                     freq_cd >= 0.00 ~ '1'))
+```
+The final step is to bind the distributions for Drinks and Donuts together by row and keep only the Product_id and Category_rating.
+
+This was then left_joined to the Sales table to add the new variable Category_rating.
+
+As this Category_rating is evidence based, I removed the Populartity variable created earlier.
+
+```{r manipulation3, echo=TRUE, message=FALSE, warning=FALSE}
+category_rating <- rbind(dist_drinks,dist_donuts) %>% 
+  select(Product_id, Category_rating)
+
+Sales_table2 <- Sales_table2 %>% 
+  left_join(category_rating, by= 'Product_id') %>% 
+  mutate(Category_rating = as.factor(Category_rating)) %>% 
+  select(- Popularity)
+
+write_csv(Sales_table2, path = "Step 3 Sales table with additional variables.csv")
+```
+The assignment asks for the Merged data table to remain in tact for the following steps of imputing missing values and cleaning outliers but I also want to acknowledge that by adding additional Price based calculations to the table it is no longer as 'Tidy' as it once was.
+
+While I will continue to use the Sales_table2 for the cleaning activities below (missing values and outliers), I ideally would want to break the merged table into two new summarised views including:  
+
+* Sales information by Customer
+    + total spend over the  days
+    + total number of transactions
+    + average units per transaction
+* Sales information by Product
+    + total sales, total revenue, Net cost, Profit per Product
+* Sales information by Date, Location and Salesperson
+    
+Ideally, I would **make long** the variables for Price, Net_cost Profit and Profit_margin into Price attributes with the values in a separate column.  However, that's another assignment!
+
+
+
+##	Scan I - Missing Values
+
+We have 5 numerical variables which have missing values to clean in this section:
+
+* Age
+* Price
+* Net_cost, Profit and Profit_margin all impacted by missing values related to Price
+
+They will require 2 different approaches to imputing missing values.
+
+
+```{r missing_values, echo=TRUE, message=FALSE, warning=FALSE}
+
+names(which(colSums(is.na(Sales_table2))>0))
+```
+
+**Missing values - Age**
+
+We know from the summary table that there are 16 NA's in the Age column. These missing values are technically easy to clean.  The simplest way to do this is by replacing any NA rows with the calculated mean of the rest of the Ages and rounding the number to ensure it is in the same format as the other rows.  
+
+By re-running names(which(colSums(is.na))) we can see Age has disappeared and there are no longer any NA values in the summary. Outliers will be cleaned later.
+
+```{r missing_values2, echo=TRUE, message=FALSE, warning=FALSE}
+summary(Sales_table2$Age)
+
+Sales_table2$Age[is.na(Sales_table2$Age)] <- round(mean(Customer_list$Age, na.rm = TRUE))
+
+names(which(colSums(is.na(Sales_table2))>0))
+
+summary(Sales_table2$Age)
+```
+
+**Missing values - Price**
+
+The next variable to clean is the Price variable.  Once Price is set, we can re-run some of the above code to re-create the values for Net_cost, Profit and Profit_margin.
+
+There are two options to fill the missing values:
+
+* Impute a mean value of price. Unfortunately, this would not work well with this data set as it would provide a non-standard value attached to the Price which was set according to the product Size and Category.
+* The second option is to fill the NA's via replacement with the actual Price.
+
+The second option is more practical in this case with the following steps:
+
+* Create a Price list table with Categories and Prices from our original data tables as the current one has NA's
+* Separate the Sales_table2 into two parts
+    + The rows with no NA's and 
+    + the rows with NA's
+* Join the Price values into the Price cells with NA
+* Calculate the new Net_cost, Profit and Profit_margin
+* Rejoin into one Sales_table2 and arrange by Transaction_id
+
+```{r missing_values3, echo=TRUE, message=FALSE, warning=FALSE}
+summary(Sales_table2$Price)
+
+Price_list <- rbind(coffee_menu,special_coffee_menu, cold_drinks_menu, donuts_menu, timbit_menu) %>%
+  select(Category, Size, Price) %>%
+  distinct(Category, Size, .keep_all = TRUE)
+
+  Sales_table_withPrice <- Sales_table2 %>% 
+  filter(!is.na(Price))
+
+Sales_table_naPrice <- Sales_table2 %>% 
+  filter(is.na(Price)) %>% 
+  left_join(Price_list, by = c("Category" = "Category", "Size" = "Size")) %>% 
+  mutate(Price = Price.y) %>% 
+  relocate(Price, .after = Size) %>% 
+  select(-Price.x, -Price.y) %>% 
+  mutate(Net_cost =
+           case_when(Category == "Coffee"~ round(Price/markup_coffee,3),
+                     Category == "Special Coffee"~ round(Price/markup_spec_coffee,3),
+                     Category == "Cold Drinks"~ round(Price/markup_drinks,3),
+                     Category == "Donuts"~ round(Price/markup_donuts,3),
+                     Category == "Timbits"~ round(Price/markup_timbits,3))) %>%
+  mutate(Profit = Price - Net_cost) %>%
+  mutate(Profit_margin = round(Profit/Price,3))
+  
+Sales_table3 <- rbind(Sales_table_withPrice,Sales_table_naPrice) %>% 
+  arrange(Transaction_number)
+
+names(which(colSums(is.na(Sales_table3))>0))
+```
+However, I note there are still rows of Price margin with missing data.
+
+With investigation, I can see it is related to some Prices set to 0 in the Outlier category. I will need to re-do some of the steps above once I fix the Outliers.
+
+
+```{r missing_values4, echo=TRUE, message=FALSE, warning=FALSE}
+Sales_table_naPrice3 <- Sales_table3 %>% 
+  filter(is.na(Profit_margin))
+
+summary(Sales_table_naPrice3$Profit_margin)
+```
+
+##	Scan II - Outliers
+
+We have 3 numerical variable which have outliers to clean in this section:
+
+* Age
+* Member_yrs
+* Price - which also impacts rows with calcualtions based on Price
+
+Each one will require a different approach.
+
+**Outliers - Age**
+
+Using a boxplot (Chart 5) and histogram (Chart 6), we can see that there are Age outliers with values of less than 0 to almost 100.  The best approach to clean these is by calculating Q1 and Q3 quantiles, using them as upper and lower 'fences' or caps and then replacing any ages below and above the fences with a calculated and rounded mean(Age). Using the expression TRUE ~ Age tells the formula to maintain the current age of any rows not impacted by the upper and lower fences.
+
+The final boxplot in Chart 7 shows the age range within expected tolerances of the minimum age of 16 and maximum age of 80 set in the intial parameters of setting up our synthetic Customer data.
+
+```{r outliers, echo=TRUE, message=FALSE, warning=FALSE}
+summary(Sales_table3$Age)
+
+boxplot(Sales_table3$Age,  main= "Chart 5: Box Plot of Age - Outliers", ylab = "Age", col = "cornflower blue")
+
+hist(Sales_table3$Age, breaks = 20, main= "Chart 6: Histogram of 
+     Age - Outliers", xlab = "Age", col = "cornflower blue")
+
+q1 <- quantile(Sales_table3$Age, probs = 0.25)
+q3 <- quantile(Sales_table3$Age, probs = 0.75)
+iqr <- q3 - q1
+
+lower_fence <- q1 - (1.5 * iqr)
+upper_fence <- q3 + (1.5 * iqr)
+
+Sales_table3<- Sales_table3 %>%
+  mutate(Age = case_when(Age > upper_fence ~ round(mean(Sales_table3$Age)),
+                         Age < lower_fence ~ round(mean(Sales_table3$Age)),
+                         TRUE ~ Age))
+
+boxplot(Sales_table3$Age,  main= "Chart 7: Box Plot of Age - no Outliers", ylab = "Age", col = "cornflower blue")
+```
+
+**Outliers - Member_yrs**
+
+We need to take a different approach than strict upper and lower fences for Member_yrs as customers with no Loyalty card have a Member_yrs value of 0 that needs to be maintained in the data.  Removing or imputing a value for non-members would be incorrect.
+
+I took a hybrid approach to this calculation by:
+
+* Calculating a rounded mean(Member_yrs) for all values below 0, thus preserving the non-members
+* Using an upper fence at Q3 to identify the upper range and mutate these higher values to a rounded mean value as those below 0
+
+The tibble and Chart 10 show the final result.
+
+```{r outliers2, echo=TRUE, message=FALSE, warning=FALSE}
+summary(Sales_table3$Member_yrs)
+
+boxplot(Sales_table3$Member_yrs, main= "Chart 8: Box Plot of years as a loyalty club member \n Outliers", ylab = "Years", col = "cornflower blue")
+
+hist(Sales_table3$Member_yrs, breaks = 20, main= "Chart 9: Histogram of years as a loyalty club member \n Outliers", xlab = "Member years", col = "cornflower blue")
+
+q1 <- quantile(Sales_table3$Member_yrs, probs = 0.25)
+q3 <- quantile(Sales_table3$Member_yrs, probs = 0.75)
+iqr <- q3 - q1
+
+lower_fence <- q1 - (1.5 * iqr)
+upper_fence <- q3 + (1.5 * iqr)
+
+Sales_table3<- Sales_table3 %>%
+  mutate(Member_yrs = case_when(Member_yrs < 0 ~ round(mean(Sales_table3$Member_yrs)),
+                         Member_yrs > upper_fence ~ round(mean(Sales_table3$Member_yrs)),
+                         TRUE ~ Member_yrs))
+
+dplyr::count(Sales_table3,Member_yrs)
+
+boxplot(Sales_table3$Member_yrs, main= "Chart 10: Box Plot of years as a loyalty club member \n no Outliers", ylab = "Years", col = "cornflower blue")
+
+
+```
+
+**Outliers - Price**
+
+While we added outliers to Price earlier, it also has a flow on effect to other variables calculated from the Price variable.  In addition to cleaning the outliers for Price, we need to fix the Net_cost, Profit, and Profit_margin variables.
+
+while we were able to use different techniques above to clean outliers for Age and Member_yrs, the best way to correct outliers in Price is to once again use the Price_list reference table as any imputed values are not correct in this situation.
+
+Steps include:
+
+* Joining the Product_list table we created earlier to the Sales table
+* Mutating the true price from the price list and replacing the old variable column through a series of steps
+* Re-calculating the Net-cost, Profit and Profit_margin
+
+The Price frequency table and the new box plot in Chart 13 show the final result.
+```{r outliers3, echo=TRUE, message=FALSE, warning=FALSE}
+summary(Sales_table3$Price)
+
+boxplot(Sales_table3$Price, main= "Chart 11: Box Plot of Price - Outliers", ylab = "Price", col = "cornflower blue")
+
+hist(Sales_table3$Price, breaks = 20, main= "Chart 12: Histogram of Price - Outliers", xlab = "Price", col = "cornflower blue")
+
+
+Sales_table3<- Sales_table3 %>% 
+  left_join(Price_list, by = c("Category" = "Category", "Size" = "Size")) %>% 
+  mutate(Price = Price.y) %>% 
+  relocate(Price, .after = Size) %>% 
+  select(-Price.x, -Price.y) %>% 
+  mutate(Net_cost =
+           case_when(Category == "Coffee"~ round(Price/markup_coffee,3),
+                     Category == "Special Coffee"~ round(Price/markup_spec_coffee,3),
+                     Category == "Cold Drinks"~ round(Price/markup_drinks,3),
+                     Category == "Donuts"~ round(Price/markup_donuts,3),
+                     Category == "Timbits"~ round(Price/markup_timbits,3))) %>%
+  mutate(Profit = Price - Net_cost) %>%
+  mutate(Profit_margin = round(Profit/Price,3))
+
+Price_freq <- count(Sales_table3,'Price')
+Price_freq
+  
+boxplot(Sales_table3$Price, main= "Chart 13: Box Plot of Price - no Outliers", ylab = "Price", col = "cornflower blue")
+
+summary(Sales_table3$Price)
+```
+While the Price variable may still seem to have an outlier around \$8.00, We know there is an item - the Large box of Timbits - that sells for \$7.99. This is not an outlier.  However the boxplot confirm we have removed any 0 prices.
+
+```{r ,echo=TRUE, message=FALSE, warning=FALSE}
+names(which(colSums(is.na(Sales_table3))>0))
+
+write_csv(Sales_table3, path = "Final clean Sales table.csv")
+```
+
+
+##	Transform 
+
+The data variables generated in this assignment on the Sales_table does not really have any skewed data requiring transformation.  However, by summarising the Price, Net_cost, and Profit by Product_id, the data will be more skewed as it is influenced by the varying prices of each product.  
+
+The first step is to create a new sub-setted table by calculating total amounts for the numeric variables and left_join() them to Product_id frequency as well. Using this new data set, I am able to perform an analysis and transformation
+
+
+```{r transform, echo=TRUE, message=FALSE, warning=FALSE}
+Sales_totals <- Sales_table3 %>% 
+  select(Product_id, Price,Net_cost, Profit) %>% 
+  group_by(Product_id) %>%
+  summarise_all(sum)
+
+Prod_freq <- count(Sales_table3,'Product_id') 
+
+Sales_totals <- Sales_totals %>% 
+  left_join(Prod_freq)
+```
+
+I did some visualisations and found Profit varied greatly both per unit and as a frequency especially when compared to the uniform distribution of the number of products sold.  
+```{r transform2, echo=TRUE, message=FALSE, warning=FALSE}
+ggplot(Sales_totals, aes(x= Product_id, y=freq))+
+  geom_bar(stat='Identity',fill = "cornflower blue", colour = "dark blue")+
+  labs(title= "Chart 14: Frequency of sales by item ", x="Product number", y="Number sold")
+
+ggplot(Sales_totals, aes(x= Product_id, y=Profit))+
+  geom_bar(stat='Identity', fill = "cornflower blue", colour = "dark blue")+
+  labs(title= "Chart 15: Profit from sales by item ", x="Product number", y="Profit ($)")
+
+hist(Sales_totals$freq, breaks = 30, main= "Chart 16: \n Histogram of Product units sold frequency", xlab = "Products", col = "cornflower blue")
+
+hist(Sales_totals$Profit, breaks = 30, main= "Chart 17: Histogram of Profit frequency", xlab = "Profit", col = "cornflower blue")
+
+write_csv(Sales_totals, path = "Sales totals table used for transformation.csv")
+```
+
+From the skewed Profit histogram in Chart 17, I tired 3 different transformation calculations:
+
+* Reciprocal Transformation
+* Square root Transformation 
+* Box-Cox Transformation using the forecast package
+
+```{r transform3, echo=TRUE, message=FALSE, warning=FALSE}
+
+left_skew_recip <- 1 / Sales_totals$Profit
+
+hist(left_skew_recip, breaks = 30, main= "Chart 18: \n Histogram of Reciprocal Profit frequency", xlab = "Profit", col = "cornflower blue")
+
+
+sqrt_Profit <- sqrt(Sales_totals$Profit)
+
+hist(sqrt_Profit, breaks = 30, main= "Chart 19: \n Histogram of Square root Profit frequency", xlab = "Profit", col = "cornflower blue")  
+
+Profit <- Sales_totals %>% 
+  select(Profit)
+
+summary(Profit)
+
+boxcox_profit <- BoxCox(Profit$Profit, lambda = "auto")
+boxcox_profit
+
+lambda <- attr(boxcox_profit, which = "lambda")
+
+ggplot(boxcox_profit %>% as.data.frame()) +
+geom_histogram(aes(x = .), bins = 30, fill = "cornflower blue", 
+               colour = "dark blue") + 
+  labs(title = "Chart 20: \n Histogram of transformed Profit using a Box-Cox Transformation", subtitle = bquote(~ lambda == .(lambda)), x = "Transformed Profit", y = "Frequency")
+
+```
+
+In the end, the Box_Cox transformation using the lambda parameter provided the best result transforming a non-normal data distribution into more normally distributed data. This transformation will better allow the use of data comparisons with other normally distributed data.
+```{r}
+
+
+```
+
+
+## References
+
+dvs 2017, ‘Generate random numbers following a distribution within an interval’, stackexchange, viewed 6 August 2022,<https://stats.stackexchange.com/q/113230> .
+
+Fast Food ‘Tim Hortons Menu Prices’, Fast Food Menu Prices, viewed 5 August 2022, <https://www.fastfoodmenuprices.com/tim-hortons-prices/>.
+
+Maida, A 2022, ‘Tim Hortons Donuts, Ranked Worst To Best’, Mashed, viewed 5 August 2022, <https://www.mashed.com/802635/tim-hortons-donuts-ranked-worst-to-best/>.
+
+Tim Hortons 2022, ‘Nutrition Information’, Tim Hortons, viewed 28 July 2022, <https://www.timhortons.ca/nutrition-and-allergens>.
+
+Tim Hortons 2018, ‘Tim Hortons’, viewed 7 August 2022, <https://timhortons.ph/our-history>.
+
+Wikimedia Commons 2007, Tim Hortons - Edmonton City Centre.jpg, viewed 5 August 2022, <https://commons.wikimedia.org/wiki/File:Tim_Hortons_-_Edmonton_City_Centre.jpg>.
+
+Wikipedia 2022, ‘Tim Hortons’, Wikipedia, viewed 7 August 2022, <https://en.wikipedia.org/w/index.php?title=Tim_Hortons&oldid=1101987478>.
+
+Wikipedia 2022, ‘The Greatest Canadian’, Wikipedia, viewed 5 August 2022, <https://en.wikipedia.org/w/index.php?title=The_Greatest_Canadian&oldid=1096634298>.
+
+
+
+<br>
+<br>
